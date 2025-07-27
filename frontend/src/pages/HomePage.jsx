@@ -9,7 +9,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth }  from '../context/AuthContext';
 
 import Navbar            from '../components/Navbar';
-import ThemeSelector     from '../components/ThemeSelector';
+import themeSelector     from '../components/themeSelector';
 import TopNavigation     from '../components/TopNavigation';
 import ContentSwitcher   from '../components/ContentSwitcher';
 import RecommendedUsers  from '../components/RecommendedUsers';
@@ -127,7 +127,7 @@ export default function HomePage() {
             <meta name="description" content="Your personalized NSZ home." />
           </Helmet>
 
-          <ThemeSelector />
+          <themeSelector />
 
           <TopNavigation
             showTrendingContent={showTrendingContent}
