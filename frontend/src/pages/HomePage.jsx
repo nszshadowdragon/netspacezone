@@ -13,7 +13,7 @@ import ThemeSelector     from '../components/ThemeSelector';
 import TopNavigation     from '../components/TopNavigation';
 import ContentSwitcher   from '../components/ContentSwitcher';
 import RecommendedUsers  from '../components/RecommendedUsers';
-import PostLiveFeed      from '../components/PostLiveFeed';
+import postLiveFeed      from '../components/postLiveFeed';
 import ActivityFeed      from '../components/ActivityFeed';
 import LazyChatWidget    from '../components/ChatWidget';
 import ErrorBoundary     from '../components/ErrorBoundary';
@@ -158,7 +158,7 @@ export default function HomePage() {
           <div className="w-full max-w-7xl mx-auto p-2 lg:p-4 flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
             <div className="flex-1 rounded-lg shadow-md p-4 border bg-white">
               <h2 className="text-xl font-bold border-b pb-2 mb-2">Post Feed</h2>
-              <PostLiveFeed />
+              <postLiveFeed />
             </div>
             <motion.div
               initial={{ opacity: 0, x: 20 }}
