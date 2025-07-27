@@ -8,7 +8,7 @@ import { Helmet } from 'react-helmet-async';
 import { motion } from 'framer-motion';
 
 import Navbar           from '../components/Navbar';
-import ThemeSelector    from '../components/ThemeSelector';
+import themeSelector    from '../components/themeSelector';
 import AboutMe          from '../components/AboutMe';
 import UserPostFeed     from '../components/UserPostFeed';
 import Achievements     from '../components/Achievements';
@@ -213,7 +213,7 @@ export default function ProfilePage() {
           </div>
         </motion.div>
 
-        {/* THE REST OF THE PAGE (ThemeSelector, AboutMe, Friends, Posts, etc.) */}
+        {/* THE REST OF THE PAGE (themeSelector, AboutMe, Friends, Posts, etc.) */}
         {/* … unchanged content … */}
 
         <LazyChatWidget />
