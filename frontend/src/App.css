@@ -1,0 +1,50 @@
+html, body {
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+}
+
+#root {
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  height: 100vh !important;
+  min-height: 100vh !important;
+  max-height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+  text-align: initial !important;
+}
+
+body {
+  overflow-x: hidden !important;
+}
+
+.page-container {
+  min-height: 100vh !important;
+  width: 100% !important;
+  min-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+  overflow-x: hidden !important;
+}
+
+.navbar {
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  left: 0 !important;
+  top: 0 !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  position: relative;
+  z-index: 100;
+  box-sizing: border-box;
+}
+
+/* Optional: Remove outlines on buttons for a cleaner look */
+button:focus {
+  outline: none;
+}

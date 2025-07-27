@@ -1,0 +1,6 @@
+node_modules
+.env
+dist
+.DS_Store
+*.log
+# (add any other files/folders you never want in your repo)
