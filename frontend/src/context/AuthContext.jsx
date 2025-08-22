@@ -4,7 +4,7 @@ const AuthContext = createContext();
 
 const API_BASE =
   import.meta.env.MODE === "production"
-    ? "https://api.netspacezone.net"
+    ? "https://api.netspacezone.com"
     : "";
 
 export function AuthProvider({ children }) {
