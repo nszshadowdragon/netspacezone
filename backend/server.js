@@ -10,9 +10,25 @@ const app = express();
 app.use(express.json({ limit: "50mb" }));   // ✅ raise limit for JSON payloads
 app.use(express.urlencoded({ limit: "50mb", extended: true })); // ✅ for form data
 app.use(cookieParser());
+
+// ✅ Redirect www API calls → api.netspacezone.com
+app.use((req, res, next) => {
+  const host = req.headers.host;
+  if (host && host.includes("www.netspacezone.com")) {
+    const newUrl = `https://api.netspacezone.com${req.originalUrl}`;
+    return res.redirect(301, newUrl);
+  }
+  next();
+});
+
+// ✅ Allow only dev + correct production domains
 app.use(
   cors({
-    origin: "http://localhost:5173", // frontend dev server
+    origin: [
+      "http://localhost:5173",        // dev
+      "https://netspacezone.com",     // production frontend
+      "https://api.netspacezone.com"  // production API domain
+    ],
     credentials: true,
   })
 );
