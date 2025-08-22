@@ -7,14 +7,15 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true },
     password: { type: String, required: true },
 
-    // ✅ Extra fields from signup
-    firstName: { type: String, default: "" },
-    lastName: { type: String, default: "" },
-    birthday: { type: Date, default: null },
-    profilePic: {
-      type: String,
-      default: "/assets/default-avatar.png", // fallback if no image uploaded
-    },
+    // ✅ All required fields
+    firstName: { type: String, required: true },
+    lastName: { type: String, required: true },
+    birthday: { type: Date, required: true },
+
+    // ✅ Profile picture must exist (base64 string)
+    profilePic: { type: String, required: true },
+
+    // ✅ Optional extras
     referral: { type: String, default: "" },
     interests: { type: [String], default: [] },
   },
