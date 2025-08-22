@@ -2,6 +2,12 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";   // ✅ global auth
 
+// ✅ Ensure API_BASE is consistent across pages
+const API_BASE =
+  import.meta.env.MODE === "production"
+    ? "https://api.netspacezone.com"
+    : import.meta.env.VITE_API_BASE || "http://localhost:5000";
+
 export default function LandingPage() {
   const navigate = useNavigate();
   const { user, login } = useAuth();
@@ -31,7 +37,8 @@ export default function LandingPage() {
 
     setLoading(true);
     try {
-      const loggedInUser = await login(identifier.trim(), password); // ✅ use AuthContext
+      // ✅ Login via AuthContext, which already uses API_BASE under the hood
+      const loggedInUser = await login(identifier.trim(), password);
       if (loggedInUser) {
         navigate(`/profile/${loggedInUser.username}`, { replace: true });
       }
