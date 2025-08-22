@@ -5,7 +5,7 @@ import "./index.css";
 
 import App from "./App"; // global wrapper with Navbar
 import Landing from "./pages/LandingPage.jsx";
-import Signup from "./pages/SignupPage.jsx";
+import Signup from "./pages/SignUpPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
 import { AuthProvider } from "./context/AuthContext";   // ✅ bring in global auth
 
