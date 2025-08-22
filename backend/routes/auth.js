@@ -1,107 +1,163 @@
+// backend/routes/auth.js
 const express = require("express");
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
-const multer = require("multer");
-const User = require("../models/User");
-
 const router = express.Router();
 
-// Multer config — store files in memory so we can convert to base64
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const fs = require("fs");
+const path = require("path");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const multer = require("multer");
 
-// JWT secret
-const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
+// adjust if your model path is different:
+const User = require("../models/User");
 
-// ================== AUTH ROUTES ================== //
+/* ---------- Multer: require an image named `profilePic` ---------- */
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith("image/")) {
+      return cb(new Error("Only image files are allowed"));
+    }
+    cb(null, true);
+  },
+});
 
-// ✅ Signup (with required profilePic)
+/* ---------- Helpers ---------- */
+function saveBufferToUploads(buffer, originalName) {
+  const uploadDir = path.join(__dirname, "..", "uploads");
+  fs.mkdirSync(uploadDir, { recursive: true });
+  const safeName = `${Date.now()}-${originalName.replace(/\s+/g, "_")}`;
+  const filePath = path.join(uploadDir, safeName);
+  fs.writeFileSync(filePath, buffer);
+  // public URL served by server.js
+  return `/uploads/${safeName}`;
+}
+
+function setAuthCookie(res, userId) {
+  const token = jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: "30d",
+  });
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "none",
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+  });
+}
+
+/* ---------- CORS preflight for this route ---------- */
+router.options("/signup", (req, res) => res.sendStatus(204));
+
+/* ---------- POST /api/auth/signup ---------- */
 router.post("/signup", upload.single("profilePic"), async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName, birthday, referral, interests } = req.body;
-
-    // Require profilePic
+    // enforce required image
     if (!req.file) {
       return res.status(400).json({ error: "Profile picture is required" });
     }
 
-    // Convert file buffer to base64
-    const profilePicBase64 = req.file.buffer.toString("base64");
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
-    const newUser = new User({
+    const {
       username,
       email,
-      password: hashedPassword,
+      password,
       firstName,
       lastName,
       birthday,
       referral,
-      interests: interests ? interests.split(",") : [],
-      profilePic: profilePicBase64,
+      interests, // comma-separated list from the client
+    } = req.body;
+
+    if (!username || !email || !password) {
+      return res
+        .status(400)
+        .json({ error: "username, email and password are required" });
+    }
+
+    const exists =
+      (await User.findOne({ username })) || (await User.findOne({ email }));
+    if (exists) return res.status(409).json({ error: "User already exists" });
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const interestsArray = (interests || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const profileImageUrl = saveBufferToUploads(
+      req.file.buffer,
+      req.file.originalname
+    );
+
+    const user = await User.create({
+      username,
+      email,
+      password: hashed,
+      firstName,
+      lastName,
+      birthday,
+      referralCode: referral || undefined,
+      interests: interestsArray,
+      profileImageUrl,
     });
 
-    await newUser.save();
-
-    res.status(201).json({ message: "Signup successful", user: newUser });
+    setAuthCookie(res, user._id);
+    return res.status(201).json({
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        profileImageUrl: user.profileImageUrl,
+      },
+    });
   } catch (err) {
     console.error("Signup error:", err);
-    res.status(500).json({ error: "Server error during signup" });
+    return res.status(500).json({ error: "Signup failed" });
   }
 });
 
-// ✅ Login
-router.post("/login", async (req, res) => {
+/* ---------- (Keep your existing /login, /logout, /me routes) ---------- */
+// Example stubs (if you already have working versions, keep those!)
+router.post("/login", express.json(), async (req, res) => {
   try {
     const { identifier, password } = req.body;
-
-    // Find user by username or email
-    const user = await User.findOne({
-      $or: [{ username: identifier }, { email: identifier }],
-    });
-
+    const user =
+      (await User.findOne({ username: identifier })) ||
+      (await User.findOne({ email: identifier }));
     if (!user) return res.status(400).json({ error: "Invalid credentials" });
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) return res.status(400).json({ error: "Invalid credentials" });
 
-    // Compare password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
-
-    // Generate JWT
-    const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: "7d" });
-
-    res
-      .cookie("token", token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
-      })
-      .json({ message: "Login successful", user });
-  } catch (err) {
-    console.error("Login error:", err);
-    res.status(500).json({ error: "Server error during login" });
+    setAuthCookie(res, user._id);
+    res.json({
+      user: { id: user._id, username: user.username, email: user.email },
+    });
+  } catch (e) {
+    res.status(500).json({ error: "Login failed" });
   }
 });
 
-// ✅ Logout
 router.post("/logout", (req, res) => {
-  res.clearCookie("token").json({ message: "Logged out" });
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "none",
+  });
+  res.json({ ok: true });
 });
 
-// ✅ Auth check (who is logged in?)
 router.get("/me", async (req, res) => {
   try {
-    const token = req.cookies.token;
+    const token = req.cookies?.token;
     if (!token) return res.status(401).json({ error: "Not authenticated" });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await User.findById(decoded.id).select("-password");
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(payload.id).select(
+      "_id username email profileImageUrl"
+    );
     if (!user) return res.status(401).json({ error: "Not authenticated" });
-
     res.json({ user });
-  } catch (err) {
+  } catch (e) {
     res.status(401).json({ error: "Not authenticated" });
   }
 });
