@@ -1,125 +1,108 @@
 const express = require("express");
+const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
 const User = require("../models/User");
 
 const router = express.Router();
 
-// Helper to create JWT and cookie
-function createToken(res, userId) {
-  const token = jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: "7d",
-  });
+// Multer config — store files in memory so we can convert to base64
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
-  const isProd = process.env.NODE_ENV === "production";
+// JWT secret
+const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
-  res.cookie("token", token, {
-    httpOnly: true,
-    sameSite: isProd ? "none" : "lax",  // ✅ allow cross-site cookies in prod
-    secure: isProd,                     // ✅ only send cookie over https in prod
-    maxAge: 1000 * 60 * 60 * 24 * 7,    // 7 days
-  });
+// ================== AUTH ROUTES ================== //
 
-  return token;
-}
-
-// Signup
-router.post("/signup", async (req, res) => {
+// ✅ Signup (with required profilePic)
+router.post("/signup", upload.single("profilePic"), async (req, res) => {
   try {
-    const {
-      username,
-      email,
-      password,
-      firstName,
-      lastName,
-      birthday,
-      profilePic,
-      referral,
-      interests,
-    } = req.body;
+    const { username, email, password, firstName, lastName, birthday, referral, interests } = req.body;
 
-    const existing = await User.findOne({ $or: [{ username }, { email }] });
-    if (existing) {
-      return res.status(400).json({ error: "User already exists" });
+    // Require profilePic
+    if (!req.file) {
+      return res.status(400).json({ error: "Profile picture is required" });
     }
 
-    const user = new User({
+    // Convert file buffer to base64
+    const profilePicBase64 = req.file.buffer.toString("base64");
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create user
+    const newUser = new User({
       username,
       email,
-      password,
+      password: hashedPassword,
       firstName,
       lastName,
       birthday,
-      profilePic,
       referral,
-      interests,
+      interests: interests ? interests.split(",") : [],
+      profilePic: profilePicBase64,
     });
 
-    await user.save();
-    createToken(res, user._id);
+    await newUser.save();
 
-    // Exclude password when sending response
-    const userObj = user.toObject();
-    delete userObj.password;
-
-    res.status(201).json({
-      message: "Signup successful",
-      user: userObj,
-    });
+    res.status(201).json({ message: "Signup successful", user: newUser });
   } catch (err) {
-    res.status(400).json({ error: "Signup failed", details: err.message });
+    console.error("Signup error:", err);
+    res.status(500).json({ error: "Server error during signup" });
   }
 });
 
-// Login
+// ✅ Login
 router.post("/login", async (req, res) => {
   try {
     const { identifier, password } = req.body;
 
+    // Find user by username or email
     const user = await User.findOne({
-      $or: [{ email: identifier }, { username: identifier }],
+      $or: [{ username: identifier }, { email: identifier }],
     });
-    if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
-    const match = await user.comparePassword(password);
-    if (!match) return res.status(401).json({ error: "Invalid credentials" });
+    if (!user) return res.status(400).json({ error: "Invalid credentials" });
 
-    createToken(res, user._id);
+    // Compare password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
 
-    const userObj = user.toObject();
-    delete userObj.password;
+    // Generate JWT
+    const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: "7d" });
 
-    res.json({
-      message: "Login successful",
-      user: userObj,
-    });
+    res
+      .cookie("token", token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+      })
+      .json({ message: "Login successful", user });
   } catch (err) {
-    res.status(500).json({ error: "Login failed" });
+    console.error("Login error:", err);
+    res.status(500).json({ error: "Server error during login" });
   }
 });
 
-// Logout
+// ✅ Logout
 router.post("/logout", (req, res) => {
-  res.clearCookie("token", {
-    httpOnly: true,
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    secure: process.env.NODE_ENV === "production",
-  });
-  res.json({ message: "Logged out" });
+  res.clearCookie("token").json({ message: "Logged out" });
 });
 
-// Get current user
+// ✅ Auth check (who is logged in?)
 router.get("/me", async (req, res) => {
   try {
     const token = req.cookies.token;
     if (!token) return res.status(401).json({ error: "Not authenticated" });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.id).select("-password");
-    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!user) return res.status(401).json({ error: "Not authenticated" });
 
     res.json({ user });
   } catch (err) {
-    res.status(401).json({ error: "Invalid/expired token" });
+    res.status(401).json({ error: "Not authenticated" });
   }
 });
 
