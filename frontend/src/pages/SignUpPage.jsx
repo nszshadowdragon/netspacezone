@@ -2,7 +2,11 @@ import React, { useRef, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";   // ✅ global auth
 
-const API_BASE = import.meta.env.VITE_API_BASE || "";
+// ✅ Updated API_BASE: production points to your live backend, dev uses env or localhost
+const API_BASE =
+  import.meta.env.MODE === "production"
+    ? "https://api.netspacezone.com"
+    : import.meta.env.VITE_API_BASE || "http://localhost:5000";
 
 const INTERESTS = [
   "Tech","Gaming","Music","Movies","Fitness","Travel","Anime","Fashion",
