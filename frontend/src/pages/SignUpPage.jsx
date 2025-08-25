@@ -1,15 +1,17 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 /** 
- * Always hit the API host in prod to avoid 405s from the Vercel frontend.
- * Local dev stays relative so it goes to your dev server/proxy.
+ * Always hit the API host in prod to avoid 405s from the frontend.
+ * In dev, you can set VITE_API_BASE=http://localhost:5000 (or your proxy).
  */
 const API_BASE =
-  window.location.hostname.endsWith("netspacezone.com")
-    ? "https://api.netspacezone.com"
-    : "";
+  (import.meta.env.VITE_API_BASE && import.meta.env.VITE_API_BASE.trim()) ||
+  (import.meta.env.PROD ? "https://api.netspacezone.com" : "");
 
 export default function SignUpPage() {
+  const navigate = useNavigate();
+
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -19,7 +21,6 @@ export default function SignUpPage() {
     birthday: "",
     referral: "",
   });
-
   const [interests, setInterests] = useState([]);
   const [profilePic, setProfilePic] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -40,7 +41,7 @@ export default function SignUpPage() {
     setError("");
 
     if (!profilePic) {
-      setError("Profile picture is required.");
+      setError("Please choose a profile image.");
       return;
     }
 
@@ -53,13 +54,12 @@ export default function SignUpPage() {
     fd.append("birthday", form.birthday);
     fd.append("referral", form.referral.trim());
     fd.append("interests", interests.join(",")); // server splits by comma
-    fd.append("profilePic", profilePic); // <— field name the server expects
+    fd.append("profilePic", profilePic); // <-- must be 'profilePic'
 
     const url = `${API_BASE}/api/auth/signup`;
+
     try {
       setSubmitting(true);
-      // (Optional) helpful during debugging:
-      // console.log("POST →", url);
 
       const res = await fetch(url, {
         method: "POST",
@@ -67,26 +67,22 @@ export default function SignUpPage() {
         credentials: "include", // send/receive auth cookie
       });
 
-      // Try to read a message if possible
-      let data = null;
-      try {
-        data = await res.json();
-      } catch {
-        /* ignore non-JSON */
-      }
-
       if (!res.ok) {
-        // 405 here typically means we posted to the wrong origin
         if (res.status === 405) {
           throw new Error(
-            "Signup endpoint returned 405. Make sure requests go to https://api.netspacezone.com."
+            "Signup endpoint returned 405. Make sure requests go to https://api.netspacezone.com"
           );
         }
-        throw new Error(data?.error || "Signup failed");
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Signup failed (${res.status})`);
       }
 
-      // Success: you’re logged in via cookie; send user to home or profile
-      window.location.href = "/";
+      // success -> route straight to profile page
+      // If your app uses /profile/:username, change to:
+      //   const data = await res.json(); navigate(`/profile/${data?.user?.username || form.username}`, { replace: true });
+      await res.json().catch(() => null);
+      navigate("/profile", { replace: true });
+
     } catch (err) {
       setError(err.message || "Signup failed");
     } finally {
@@ -94,43 +90,37 @@ export default function SignUpPage() {
     }
   };
 
-  return (
-    <div className="signup">
-      <h1>Create Account</h1>
+  const ALL_INTERESTS = [
+    "Tech","Gaming","Music","Movies","Fitness","Travel",
+    "Anime","Fashion","Food","Art","Science","Education",
+    "Coding","Sports","Business","News","Photography",
+    "Writing","DIY","Parenting","Finance","Comics",
+    "Streaming","Pets","History"
+  ];
 
-      <form onSubmit={submit} encType="multipart/form-data">
+  return (
+    <div style={{ maxWidth: 720, margin: "0 auto", padding: 24 }}>
+      <h1>Create your account</h1>
+
+      <form onSubmit={submit}>
+        <h2>Step 1: Basic Info</h2>
         <label>
           Username
-          <input
-            name="username"
-            value={form.username}
-            onChange={onChange}
-            required
-          />
+          <input name="username" value={form.username} onChange={onChange} />
         </label>
 
         <label>
           Email
-          <input
-            type="email"
-            name="email"
-            value={form.email}
-            onChange={onChange}
-            required
-          />
+          <input type="email" name="email" value={form.email} onChange={onChange} />
         </label>
 
+        <h2>Step 2: Security</h2>
         <label>
           Password
-          <input
-            type="password"
-            name="password"
-            value={form.password}
-            onChange={onChange}
-            required
-          />
+          <input type="password" name="password" value={form.password} onChange={onChange} />
         </label>
 
+        <h2>Step 3: Profile</h2>
         <label>
           First name
           <input name="firstName" value={form.firstName} onChange={onChange} />
@@ -147,25 +137,20 @@ export default function SignUpPage() {
         </label>
 
         <label>
+          Profile Image
+          <input type="file" accept="image/*" onChange={handleFile} />
+        </label>
+
+        <h2>Step 4: Referral</h2>
+        <label>
           Referral Code
           <input name="referral" value={form.referral} onChange={onChange} />
         </label>
 
-        <label>
-          Profile picture (required)
-          <input type="file" accept="image/*" onChange={handleFile} required />
-        </label>
-
-        {/* Minimal interests UI (checkboxes) */}
-        <fieldset>
-          <legend>Interests</legend>
-          {[
-            "Tech","Gaming","Music","Movies","Fitness","Travel",
-            "Anime","Fashion","Food","Art","Science","Education",
-            "Coding","Sports","Business","News","Photography","Writing",
-            "DIY","Parenting","Finance","Comics","Streaming","Pets","History",
-          ].map((i) => (
-            <label key={i} style={{ marginRight: 12 }}>
+        <h2>Step 5: Interests</h2>
+        <fieldset style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
+          {ALL_INTERESTS.map((i) => (
+            <label key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input
                 type="checkbox"
                 checked={interests.includes(i)}
