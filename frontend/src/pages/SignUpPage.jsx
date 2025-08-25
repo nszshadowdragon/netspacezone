@@ -1,13 +1,20 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-/** 
- * Always hit the API host in prod to avoid 405s from the frontend.
- * In dev, you can set VITE_API_BASE=http://localhost:5000 (or your proxy).
- */
-const API_BASE =
-  (import.meta.env.VITE_API_BASE && import.meta.env.VITE_API_BASE.trim()) ||
-  (import.meta.env.PROD ? "https://api.netspacezone.com" : "");
+// Runtime-safe URL fixer: always send to api.netspacezone.com in prod
+function apiUrl(path) {
+  try {
+    const u = new URL(path, window.location.origin);
+    // If we’re on the web app host, rewrite to API host
+    if (/^(www\.)?netspacezone\.com$/i.test(u.hostname)) {
+      u.protocol = "https:";
+      u.hostname = "api.netspacezone.com";
+    }
+    return u.toString();
+  } catch {
+    return `https://api.netspacezone.com${path}`;
+  }
+}
 
 export default function SignUpPage() {
   const navigate = useNavigate();
@@ -54,9 +61,9 @@ export default function SignUpPage() {
     fd.append("birthday", form.birthday);
     fd.append("referral", form.referral.trim());
     fd.append("interests", interests.join(",")); // server splits by comma
-    fd.append("profilePic", profilePic); // <-- must be 'profilePic'
+    fd.append("profilePic", profilePic); // key must be profilePic
 
-    const url = `${API_BASE}/api/auth/signup`;
+    const url = apiUrl("/api/auth/signup");
 
     try {
       setSubmitting(true);
@@ -64,25 +71,19 @@ export default function SignUpPage() {
       const res = await fetch(url, {
         method: "POST",
         body: fd,
-        credentials: "include", // send/receive auth cookie
+        credentials: "include",
       });
 
       if (!res.ok) {
-        if (res.status === 405) {
-          throw new Error(
-            "Signup endpoint returned 405. Make sure requests go to https://api.netspacezone.com"
-          );
-        }
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error || `Signup failed (${res.status})`);
       }
 
-      // success -> route straight to profile page
-      // If your app uses /profile/:username, change to:
-      //   const data = await res.json(); navigate(`/profile/${data?.user?.username || form.username}`, { replace: true });
+      // success -> go straight to profile page
+      // If your route is /profile/:username, swap to:
+      // const data = await res.json(); navigate(`/profile/${data?.user?.username || form.username}`, { replace: true });
       await res.json().catch(() => null);
       navigate("/profile", { replace: true });
-
     } catch (err) {
       setError(err.message || "Signup failed");
     } finally {
