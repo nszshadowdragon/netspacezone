@@ -1,18 +1,5 @@
-{
-  "redirects": [
-    {
-      "source": "/(.*)",
-      "has": [
-        {
-          "type": "host",
-          "value": "www.netspacezone.com"
-        }
-      ],
-      "destination": "https://netspacezone.com/:1",
-      "permanent": true
-    }
-  ],
+﻿{
   "rewrites": [
-    { "source": "/(.*)", "destination": "/" }
+    { "source": "/api/(.*)", "destination": "https://api.netspacezone.com/api/" }
   ]
 }
