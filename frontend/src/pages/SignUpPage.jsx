@@ -1,15 +1,18 @@
 // frontend/src/pages/SignUpPage.jsx
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
-const SIGNUP_URL = "https://api.netspacezone.com/api/auth/signup";
+// Always hit the API host (prevents 405s on the app host)
+const API_BASE = "https://api.netspacezone.com";
+const SIGNUP_URL = `${API_BASE}/api/auth/signup`;
+const ME_URL = `${API_BASE}/api/auth/me`;
 
+// (kept from your original screen)
 const INTERESTS = [
-  "Tech","Gaming","Music","Movies","Fitness","Travel",
-  "Anime","Fashion","Food","Art","Science","Education",
-  "Coding","Sports","Business","News","Photography",
-  "Writing","DIY","Parenting","Finance","Comics",
-  "Streaming","Pets","History"
+  "Tech","Gaming","Music","Movies","Fitness","Travel","Anime","Fashion",
+  "Food","Art","Science","Education","Coding","Sports","Business","News",
+  "Photography","Writing","DIY","Parenting","Finance","Comics","Streaming","Pets","History"
 ];
 
 const SECTIONS = [
@@ -17,98 +20,129 @@ const SECTIONS = [
   { label: "Security",    key: "security"},
   { label: "Profile",     key: "profile" },
   { label: "Referral",    key: "referral"},
-  { label: "Interests",   key: "interests"},
 ];
 
 export default function SignUpPage() {
   const navigate = useNavigate();
+  const { login } = useAuth?.() || { login: null };
 
-  // sticky anchors (left nav buttons)
   const refs = {
     basic: useRef(null),
     security: useRef(null),
     profile: useRef(null),
     referral: useRef(null),
-    interests: useRef(null),
   };
 
   const [form, setForm] = useState({
     username: "",
+    usernameAvailable: null, // kept; harmless if API not present
     email: "",
-    password: "",
-    confirm: "",
+    birthday: "",
     firstName: "",
     lastName: "",
-    birthday: "",
+    password: "",
+    confirmPassword: "",
+    securityQuestion: "",
+    securityAnswer: "",
+    favoriteQuote: "",
     referral: "",
   });
-  const [interests, setInterests] = useState([]);
-  const [profilePic, setProfilePic] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
+  const [interests, setInterests] = useState<string[]>([]);
+  const [profilePic, setProfilePic] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<Record<string,string>>({});
 
-  useEffect(() => {
-    document.documentElement.style.scrollBehavior = "smooth";
-    return () => (document.documentElement.style.scrollBehavior = "");
-  }, []);
+  // Username availability (no-op if endpoint doesn’t exist)
+  async function checkUsername(username: string) {
+    if (username.length < 3) return setForm(f => ({ ...f, usernameAvailable: null }));
+    try {
+      const r = await fetch(`${API_BASE}/api/check-username?username=${encodeURIComponent(username)}`, { credentials: "include" });
+      if (!r.ok) return setForm(f => ({ ...f, usernameAvailable: null }));
+      const j = await r.json();
+      setForm(f => ({ ...f, usernameAvailable: !!j?.available }));
+    } catch {
+      setForm(f => ({ ...f, usernameAvailable: null }));
+    }
+  }
 
-  const onChange = (e) =>
-    setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+  const onChange = (e) => {
+    const { name, value, type, files, checked } = e.target;
+    if (type === "file") {
+      setProfilePic(files?.[0] ?? null);
+      return;
+    }
+    if (type === "checkbox" && name === "interests") {
+      setInterests((prev) => (checked ? [...prev, value] : prev.filter((x) => x !== value)));
+      return;
+    }
+    setForm((f) => ({ ...f, [name]: value }));
+    if (name === "username") {
+      setForm((f) => ({ ...f, usernameAvailable: null }));
+      checkUsername(value);
+    }
+  };
 
-  const toggleInterest = (name) =>
-    setInterests((prev) =>
-      prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
-    );
+  // age helper (from your previous screen)
+  const age = form.birthday
+    ? Math.max(0, new Date(Date.now() - new Date(form.birthday).getTime()).getUTCFullYear() - 1970)
+    : "";
 
-  // Password rules (live)
+  // password rules + show/hide
+  const [showPass, setShowPass] = useState(false);
+  const [showConf, setShowConf] = useState(false);
   const pw = form.password || "";
-  const pwRules = useMemo(() => ({
-    length: pw.length >= 8 && pw.length <= 64,
-    upper: /[A-Z]/.test(pw),
-    lower: /[a-z]/.test(pw),
-    digit: /\d/.test(pw),
-    special: /[^A-Za-z0-9]/.test(pw),
-    match: form.confirm && form.confirm === pw,
-  }), [pw, form.confirm]);
+  const pwRules = [
+    { ok: pw.length >= 8, label: "8+ characters" },
+    { ok: /[A-Z]/.test(pw), label: "1 uppercase" },
+    { ok: /[a-z]/.test(pw), label: "1 lowercase" },
+    { ok: /\d/.test(pw), label: "1 number" },
+    { ok: /[^A-Za-z0-9]/.test(pw), label: "1 symbol" },
+  ];
+  const pwOK = pwRules.every((r) => r.ok) && form.confirmPassword === pw;
 
-  const allPwOk = pwRules.length && pwRules.upper && pwRules.lower && pwRules.digit && pwRules.special && pwRules.match;
+  function validate(): boolean {
+    const e: Record<string,string> = {};
+    if (!form.username) e.username = "Username required";
+    else if (form.username.length < 3) e.username = "Min 3 chars";
+    else if (form.usernameAvailable === false) e.username = "Not available";
 
-  const submit = async (e) => {
+    if (!form.email) e.email = "Email required";
+    if (!form.birthday) e.birthday = "Birthday required";
+    else if (age && +age < 18) e.birthday = "18+ only";
+
+    if (!form.password) e.password = "Required";
+    else if (!pwOK) e.password = "Password requirements not met";
+
+    if (!form.confirmPassword) e.confirmPassword = "Required";
+    else if (form.confirmPassword !== form.password) e.confirmPassword = "Does not match";
+
+    if (!profilePic) e.profilePic = "Profile image required";
+
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  }
+
+  async function submit(e) {
     e.preventDefault();
-    setError("");
-
-    // basic client checks similar to your original behavior
-    if (!form.username.trim() || !form.email.trim() || !pw) {
-      setError("Please complete all required fields.");
-      return;
-    }
-    if (!allPwOk) {
-      setError("Please meet the password requirements.");
-      return;
-    }
-    if (!form.firstName.trim() || !form.lastName.trim() || !form.birthday) {
-      setError("Please fill your profile details.");
-      return;
-    }
-    if (!profilePic) {
-      setError("Please choose a profile image.");
-      return;
-    }
-
-    // Build multipart body (do NOT set Content-Type manually)
-    const fd = new FormData();
-    fd.append("username", form.username.trim());
-    fd.append("email", form.email.trim());
-    fd.append("password", form.password);
-    fd.append("firstName", form.firstName.trim());
-    fd.append("lastName", form.lastName.trim());
-    fd.append("birthday", form.birthday);
-    fd.append("referral", form.referral.trim());
-    fd.append("interests", interests.join(",")); // server splits by comma
-    fd.append("profilePic", profilePic);         // key must be profilePic
+    if (!validate()) return;
+    setLoading(true);
 
     try {
-      setSubmitting(true);
+      // multipart payload expected by the current API
+      const fd = new FormData();
+      fd.append("username", form.username.trim());
+      fd.append("email", form.email.trim());
+      fd.append("password", form.password);
+      fd.append("firstName", form.firstName.trim());
+      fd.append("lastName", form.lastName.trim());
+      fd.append("birthday", form.birthday);
+      fd.append("referral", form.referral.trim());
+      fd.append("interests", interests.join(","));
+      fd.append("profilePic", profilePic as Blob); // key required by backend
+      // keep optional screen fields (won’t hurt if backend ignores)
+      fd.append("securityQuestion", form.securityQuestion);
+      fd.append("securityAnswer", form.securityAnswer);
+      fd.append("favoriteQuote", form.favoriteQuote);
 
       const res = await fetch(SIGNUP_URL, {
         method: "POST",
@@ -116,24 +150,42 @@ export default function SignUpPage() {
         body: fd,
       });
 
+      const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         throw new Error(data?.error || `Signup failed (${res.status})`);
       }
 
-      await res.json().catch(() => null);
-      // ✅ Success → PROFILE page (not landing)
-      navigate("/profile", { replace: true });
+      // confirm session & populate auth context (mirrors your old flow)
+      try {
+        const meRes = await fetch(ME_URL, { credentials: "include" });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (login) await login({ user: me?.user });
+        }
+      } catch {}
+
+      // ✅ Route to /profile/:username if available, else /profile
+      const dest = data?.user?.username ? `/profile/${data.user.username}` : "/profile";
+      navigate(dest, { replace: true });
+      // hard fallback in case router state is mid-transition
+      setTimeout(() => {
+        if (location.pathname !== dest) window.location.href = dest;
+      }, 150);
     } catch (err) {
-      setError(err.message || "Signup failed");
+      setErrors((p) => ({ ...p, submit: err.message || "Signup failed" }));
     } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
-  };
+  }
+
+  useEffect(() => {
+    document.documentElement.style.scrollBehavior = "smooth";
+    return () => { document.documentElement.style.scrollBehavior = ""; };
+  }, []);
 
   return (
     <div
-      className="signup-root"
       style={{
         minHeight: "100vh",
         width: "100%",
@@ -144,7 +196,7 @@ export default function SignUpPage() {
         padding: 16,
       }}
     >
-      {/* Left: Section jump nav */}
+      {/* Left nav (section jump) */}
       <nav
         style={{
           position: "sticky",
@@ -173,18 +225,18 @@ export default function SignUpPage() {
         </ul>
       </nav>
 
-      {/* Right: Form */}
+      {/* Form */}
       <div style={{ flex: 1, maxWidth: 900, margin: "0 auto" }}>
         <h1 style={{ margin: "8px 0 16px 0", fontSize: "2rem", fontWeight: 800 }}>
           Create your account
         </h1>
 
-        <form onSubmit={submit} className="signup-form" autoComplete="off">
+        <form onSubmit={submit} autoComplete="off" style={{ color: "#ffe259" }}>
           {/* Step 1: Basic Info */}
           <section ref={refs.basic} style={sectionStyle}>
             <h2 style={sectionTitle}>Step 1: Basic Info</h2>
 
-            <Field label="Username">
+            <Field label="Username (required)">
               <input
                 name="username"
                 value={form.username}
@@ -193,8 +245,19 @@ export default function SignUpPage() {
                 autoComplete="username"
               />
             </Field>
+            {form.username.length > 2 && (
+              <div style={{
+                color:
+                  form.usernameAvailable === null ? "#aaa" :
+                  form.usernameAvailable ? "#16ff80" : "#fa6c6c",
+                fontWeight: 700, fontSize: "0.96rem", marginTop: -8, marginBottom: 8
+              }}>
+                {form.usernameAvailable === null ? "" : form.usernameAvailable ? "Available" : "Not available"}
+              </div>
+            )}
+            {errors.username && <Err>{errors.username}</Err>}
 
-            <Field label="Email">
+            <Field label="Email (required)">
               <input
                 type="email"
                 name="email"
@@ -204,169 +267,172 @@ export default function SignUpPage() {
                 autoComplete="email"
               />
             </Field>
+            {errors.email && <Err>{errors.email}</Err>}
+
+            <Field label="Birthday (required, 18+)">
+              <input
+                type="date"
+                name="birthday"
+                value={form.birthday}
+                onChange={onChange}
+                style={inputStyle}
+              />
+            </Field>
+            {!!form.birthday && (
+              <div style={{ fontSize: "0.98rem", marginTop: -4, color: +age < 18 ? "#f87171" : "#16ff80" }}>
+                Age: {age}
+              </div>
+            )}
+            {errors.birthday && <Err>{errors.birthday}</Err>}
+
+            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+              <Field label="First Name">
+                <input name="firstName" value={form.firstName} onChange={onChange} style={inputStyle} />
+              </Field>
+              <Field label="Last Name">
+                <input name="lastName" value={form.lastName} onChange={onChange} style={inputStyle} />
+              </Field>
+            </div>
           </section>
 
           {/* Step 2: Security */}
           <section ref={refs.security} style={sectionStyle}>
             <h2 style={sectionTitle}>Step 2: Security</h2>
 
-            <Field label="Password">
-              <input
-                type="password"
-                name="password"
-                value={form.password}
-                onChange={onChange}
-                style={inputStyle}
-                autoComplete="new-password"
-              />
-            </Field>
-
-            <Field label="Confirm password">
-              <input
-                type="password"
-                name="confirm"
-                value={form.confirm}
-                onChange={onChange}
-                style={inputStyle}
-                autoComplete="new-password"
-              />
-            </Field>
-
-            {/* Password requirements */}
-            <div style={pwHelpWrap}>
-              <PwRule ok={pwRules.length} text="8–64 characters" />
-              <PwRule ok={pwRules.upper} text="At least one uppercase (A–Z)" />
-              <PwRule ok={pwRules.lower} text="At least one lowercase (a–z)" />
-              <PwRule ok={pwRules.digit} text="At least one number (0–9)" />
-              <PwRule ok={pwRules.special} text="At least one symbol (!@#$…)" />
-              <PwRule ok={pwRules.match} text="Passwords match" />
+            <div style={{ position: "relative", marginBottom: 6 }}>
+              <Field label="Password (required)">
+                <input
+                  type={showPass ? "text" : "password"}
+                  name="password"
+                  value={form.password}
+                  onChange={onChange}
+                  style={inputStyle}
+                  autoComplete="new-password"
+                />
+              </Field>
+              <button
+                type="button"
+                onClick={() => setShowPass(v => !v)}
+                style={showBtn}
+                tabIndex={-1}
+              >
+                {showPass ? "Hide" : "Show"}
+              </button>
             </div>
+            <ul style={pwList}>
+              {pwRules.map((r) => (
+                <li key={r.label} style={{ color: r.ok ? "#16ff80" : "#fa6c6c" }}>
+                  {r.ok ? "✓" : "○"} {r.label}
+                </li>
+              ))}
+            </ul>
+
+            <div style={{ position: "relative" }}>
+              <Field label="Confirm Password (required)">
+                <input
+                  type={showConf ? "text" : "password"}
+                  name="confirmPassword"
+                  value={form.confirmPassword}
+                  onChange={onChange}
+                  style={inputStyle}
+                  autoComplete="new-password"
+                />
+              </Field>
+              <button
+                type="button"
+                onClick={() => setShowConf(v => !v)}
+                style={showBtn}
+                tabIndex={-1}
+              >
+                {showConf ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            <Field label="Security Question">
+              <input name="securityQuestion" value={form.securityQuestion} onChange={onChange} style={inputStyle} />
+            </Field>
+            <Field label="Security Answer">
+              <input name="securityAnswer" value={form.securityAnswer} onChange={onChange} style={inputStyle} />
+            </Field>
+
+            {errors.password && <Err>{errors.password}</Err>}
+            {errors.confirmPassword && <Err>{errors.confirmPassword}</Err>}
           </section>
 
           {/* Step 3: Profile */}
           <section ref={refs.profile} style={sectionStyle}>
             <h2 style={sectionTitle}>Step 3: Profile</h2>
 
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-              <Field label="First name">
-                <input
-                  name="firstName"
-                  value={form.firstName}
-                  onChange={onChange}
-                  style={inputStyle}
+            <label style={{ display: "block", marginBottom: 8, fontWeight: 700 }}>Profile Image (required)</label>
+            <input type="file" name="profilePic" accept="image/*" onChange={onChange}
+              style={{ ...inputStyle, padding: 8, border: "1.5px solid #3c3836" }}/>
+            {profilePic && (
+              <div style={{ marginTop: 8 }}>
+                <img
+                  src={URL.createObjectURL(profilePic)}
+                  alt="Preview"
+                  width={96}
+                  height={96}
+                  style={{ objectFit: "cover", borderRadius: 10, border: "1px solid #2d2d32" }}
                 />
-              </Field>
-              <Field label="Last name">
-                <input
-                  name="lastName"
-                  value={form.lastName}
-                  onChange={onChange}
-                  style={inputStyle}
-                />
-              </Field>
-            </div>
+              </div>
+            )}
+            {errors.profilePic && <Err>{errors.profilePic}</Err>}
 
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-              <Field label="Birthday">
-                <input
-                  type="date"
-                  name="birthday"
-                  value={form.birthday}
-                  onChange={onChange}
-                  style={inputStyle}
-                />
-              </Field>
+            <Field label="Favorite Quote">
+              <input name="favoriteQuote" value={form.favoriteQuote} onChange={onChange} style={inputStyle} />
+            </Field>
 
-              <Field label="Profile Image">
-                <input
-                  type="file"
-                  name="profilePic"
-                  accept="image/*"
-                  onChange={(e) => setProfilePic(e.target.files?.[0] || null)}
-                  style={{
-                    ...inputStyle,
-                    padding: 8,
-                    border: "1.5px solid #3c3836",
-                    background: "#000",
-                    color: "#ffe259",
-                  }}
-                />
-                {profilePic && (
-                  <div style={{ marginTop: 8 }}>
-                    <img
-                      src={URL.createObjectURL(profilePic)}
-                      alt="Preview"
-                      width={96}
-                      height={96}
-                      style={{ objectFit: "cover", borderRadius: 10, border: "1px solid #2d2d32" }}
+            <div style={{ marginTop: 8 }}>
+              <label style={{ fontWeight: 700 }}>Choose up to 25 Interests</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 7 }}>
+                {INTERESTS.map((i) => (
+                  <label key={i}
+                    style={{ background: interests.includes(i) ? "#0ff" : "#232326", color: "#121214",
+                             borderRadius: 7, fontWeight: 700, padding: "4px 10px", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      name="interests"
+                      value={i}
+                      checked={interests.includes(i)}
+                      onChange={(ev) => {
+                        if (ev.target.checked && interests.length >= 25) return;
+                        onChange(ev);
+                      }}
+                      style={{ marginRight: 4, accentColor: "#ffe259" }}
                     />
-                  </div>
-                )}
-              </Field>
+                    {i}
+                  </label>
+                ))}
+              </div>
+              <div style={{ fontSize: "0.95rem", color: interests.length > 25 ? "#f87171" : "#ffe259" }}>
+                {interests.length}/25 selected
+              </div>
             </div>
           </section>
 
           {/* Step 4: Referral */}
           <section ref={refs.referral} style={sectionStyle}>
             <h2 style={sectionTitle}>Step 4: Referral</h2>
-            <Field label="Referral Code">
-              <input
-                name="referral"
-                value={form.referral}
-                onChange={onChange}
-                style={inputStyle}
-              />
+            <Field label="Referral Code (optional)">
+              <input name="referral" value={form.referral} onChange={onChange} style={inputStyle} />
             </Field>
           </section>
 
-          {/* Step 5: Interests */}
-          <section ref={refs.interests} style={{ ...sectionStyle, paddingBottom: 8 }}>
-            <h2 style={sectionTitle}>Step 5: Interests</h2>
-            <div
-              className="interests-grid"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(4, minmax(0,1fr))",
-                gap: 10,
-                padding: 10,
-                border: "1px solid #2d2d32",
-                borderRadius: 10,
-                background: "#0b0b0e",
-              }}
-            >
-              {INTERESTS.map((i) => (
-                <label key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="checkbox"
-                    checked={interests.includes(i)}
-                    onChange={() => toggleInterest(i)}
-                    style={{ accentColor: "#ffe259" }}
-                  />
-                  {i}
-                </label>
-              ))}
-            </div>
-          </section>
+          {/* Footer actions */}
+          {errors.submit && <Err>{errors.submit}</Err>}
 
-          {/* Errors */}
-          {error && (
-            <p style={{ color: "salmon", marginTop: 6, fontWeight: 600 }}>{error}</p>
-          )}
-
-          {/* Actions */}
-          <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-            <button type="submit" disabled={submitting} style={primaryBtn(submitting)}>
-              {submitting ? "Creating..." : "Create Account"}
-            </button>
-
-            {/* Cancel → landing */}
+          <div style={{ display: "flex", gap: 12, marginTop: 10 }}>
             <button
               type="button"
               onClick={() => navigate("/")}
-              disabled={submitting}
+              disabled={loading}
               style={secondaryBtn}
             >
               Cancel
+            </button>
+            <button type="submit" disabled={loading} style={primaryBtn(loading)}>
+              {loading ? "Creating Account..." : "Create Account"}
             </button>
           </div>
         </form>
@@ -375,7 +441,7 @@ export default function SignUpPage() {
   );
 }
 
-/* ---------- UI helpers ---------- */
+/* ---------- UI bits (match your look) ---------- */
 function Field({ label, children }) {
   return (
     <label style={{ display: "block", marginBottom: 12 }}>
@@ -384,23 +450,9 @@ function Field({ label, children }) {
     </label>
   );
 }
-
-function PwRule({ ok, text }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span
-        aria-hidden
-        style={{
-          width: 10, height: 10, borderRadius: 9999,
-          background: ok ? "#39d98a" : "#555",
-          border: "1px solid #2d2d32",
-          display: "inline-block"
-        }}
-      />
-      <span style={{ color: ok ? "#c6ffdd" : "#aaa" }}>{text}</span>
-    </div>
-  );
-}
+const Err = ({ children }) => (
+  <div style={{ color: "#f87171", fontSize: "0.98rem", marginTop: 4 }}>{children}</div>
+);
 
 const navBtn = {
   width: "100%",
@@ -411,24 +463,11 @@ const navBtn = {
   border: "1px solid #2d2d32",
   borderRadius: 8,
   cursor: "pointer",
+  boxShadow: "0 1px 4px #2228",
 };
 
-const sectionStyle = {
-  padding: "0 0 18px 0",
-  marginBottom: 28,
-  background: "none",
-  border: "none",
-  boxShadow: "none",
-};
-
-const sectionTitle = {
-  fontSize: "1.35rem",
-  fontWeight: 800,
-  marginBottom: 14,
-  color: "#ffe259",
-  letterSpacing: 0.5,
-};
-
+const sectionStyle = { padding: "0 0 18px 0", marginBottom: 28, background: "none", border: "none" };
+const sectionTitle = { fontSize: "1.35rem", fontWeight: 800, marginBottom: 14, color: "#ffe259", letterSpacing: 0.5 };
 const inputStyle = {
   width: "100%",
   padding: "10px 13px",
@@ -439,18 +478,8 @@ const inputStyle = {
   fontSize: "1.05rem",
   outline: "none",
 };
-
-const pwHelpWrap = {
-  display: "grid",
-  gridTemplateColumns: "repeat(2,minmax(0,1fr))",
-  gap: 8,
-  padding: "8px 10px",
-  border: "1px dashed #2d2d32",
-  borderRadius: 10,
-  background: "#0b0b0e",
-  marginTop: 8,
-};
-
+const pwList = { fontSize: "0.95rem", margin: "6px 0 14px 0", padding: 0, listStyle: "none" };
+const showBtn = { position: "absolute", right: 18, top: 31, background: "none", color: "#ffe259", border: "none", cursor: "pointer", fontWeight: 700 };
 const primaryBtn = (disabled) => ({
   background: "#ffe259",
   color: "#111",
@@ -461,9 +490,7 @@ const primaryBtn = (disabled) => ({
   borderRadius: 9,
   cursor: disabled ? "default" : "pointer",
   opacity: disabled ? 0.65 : 1,
-  transition: "opacity .15s",
 });
-
 const secondaryBtn = {
   background: "#232326",
   color: "#ffe259",
