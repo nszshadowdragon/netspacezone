@@ -1,5 +1,5 @@
 // frontend/src/pages/SignUpPage.jsx
-import React, { useState, useRef, useEffect } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
 const SIGNUP_URL = "https://api.netspacezone.com/api/auth/signup";
@@ -16,24 +16,27 @@ const SECTIONS = [
   { label: "Basic Info",  key: "basic"   },
   { label: "Security",    key: "security"},
   { label: "Profile",     key: "profile" },
-  { label: "Referral",    key: "referral"}
+  { label: "Referral",    key: "referral"},
+  { label: "Interests",   key: "interests"},
 ];
 
 export default function SignUpPage() {
   const navigate = useNavigate();
 
-  // refs for side-nav scroll
+  // sticky anchors (left nav buttons)
   const refs = {
-    basic:   useRef(null),
-    security:useRef(null),
+    basic: useRef(null),
+    security: useRef(null),
     profile: useRef(null),
-    referral:useRef(null),
+    referral: useRef(null),
+    interests: useRef(null),
   };
 
   const [form, setForm] = useState({
     username: "",
     email: "",
     password: "",
+    confirm: "",
     firstName: "",
     lastName: "",
     birthday: "",
@@ -44,7 +47,6 @@ export default function SignUpPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  // keep focus scroll nice
   useEffect(() => {
     document.documentElement.style.scrollBehavior = "smooth";
     return () => (document.documentElement.style.scrollBehavior = "");
@@ -58,15 +60,42 @@ export default function SignUpPage() {
       prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
     );
 
+  // Password rules (live)
+  const pw = form.password || "";
+  const pwRules = useMemo(() => ({
+    length: pw.length >= 8 && pw.length <= 64,
+    upper: /[A-Z]/.test(pw),
+    lower: /[a-z]/.test(pw),
+    digit: /\d/.test(pw),
+    special: /[^A-Za-z0-9]/.test(pw),
+    match: form.confirm && form.confirm === pw,
+  }), [pw, form.confirm]);
+
+  const allPwOk = pwRules.length && pwRules.upper && pwRules.lower && pwRules.digit && pwRules.special && pwRules.match;
+
   const submit = async (e) => {
     e.preventDefault();
     setError("");
 
+    // basic client checks similar to your original behavior
+    if (!form.username.trim() || !form.email.trim() || !pw) {
+      setError("Please complete all required fields.");
+      return;
+    }
+    if (!allPwOk) {
+      setError("Please meet the password requirements.");
+      return;
+    }
+    if (!form.firstName.trim() || !form.lastName.trim() || !form.birthday) {
+      setError("Please fill your profile details.");
+      return;
+    }
     if (!profilePic) {
       setError("Please choose a profile image.");
       return;
     }
 
+    // Build multipart body (do NOT set Content-Type manually)
     const fd = new FormData();
     fd.append("username", form.username.trim());
     fd.append("email", form.email.trim());
@@ -75,8 +104,8 @@ export default function SignUpPage() {
     fd.append("lastName", form.lastName.trim());
     fd.append("birthday", form.birthday);
     fd.append("referral", form.referral.trim());
-    fd.append("interests", interests.join(","));  // server splits by comma
-    fd.append("profilePic", profilePic);          // key MUST be profilePic
+    fd.append("interests", interests.join(",")); // server splits by comma
+    fd.append("profilePic", profilePic);         // key must be profilePic
 
     try {
       setSubmitting(true);
@@ -84,7 +113,7 @@ export default function SignUpPage() {
       const res = await fetch(SIGNUP_URL, {
         method: "POST",
         credentials: "include",
-        body: fd, // DO NOT set Content-Type manually
+        body: fd,
       });
 
       if (!res.ok) {
@@ -92,8 +121,8 @@ export default function SignUpPage() {
         throw new Error(data?.error || `Signup failed (${res.status})`);
       }
 
-      // success -> go to profile
       await res.json().catch(() => null);
+      // ✅ Success → PROFILE page (not landing)
       navigate("/profile", { replace: true });
     } catch (err) {
       setError(err.message || "Signup failed");
@@ -135,16 +164,7 @@ export default function SignUpPage() {
               <button
                 type="button"
                 onClick={() => refs[s.key].current?.scrollIntoView({ block: "start" })}
-                style={{
-                  width: "100%",
-                  padding: "8px 0",
-                  color: "#ffe259",
-                  fontWeight: 700,
-                  background: "#232326",
-                  border: "1px solid #2d2d32",
-                  borderRadius: 8,
-                  cursor: "pointer",
-                }}
+                style={navBtn}
               >
                 {s.label}
               </button>
@@ -200,6 +220,27 @@ export default function SignUpPage() {
                 autoComplete="new-password"
               />
             </Field>
+
+            <Field label="Confirm password">
+              <input
+                type="password"
+                name="confirm"
+                value={form.confirm}
+                onChange={onChange}
+                style={inputStyle}
+                autoComplete="new-password"
+              />
+            </Field>
+
+            {/* Password requirements */}
+            <div style={pwHelpWrap}>
+              <PwRule ok={pwRules.length} text="8–64 characters" />
+              <PwRule ok={pwRules.upper} text="At least one uppercase (A–Z)" />
+              <PwRule ok={pwRules.lower} text="At least one lowercase (a–z)" />
+              <PwRule ok={pwRules.digit} text="At least one number (0–9)" />
+              <PwRule ok={pwRules.special} text="At least one symbol (!@#$…)" />
+              <PwRule ok={pwRules.match} text="Passwords match" />
+            </div>
           </section>
 
           {/* Step 3: Profile */}
@@ -279,7 +320,7 @@ export default function SignUpPage() {
           </section>
 
           {/* Step 5: Interests */}
-          <section style={{ ...sectionStyle, paddingBottom: 8 }}>
+          <section ref={refs.interests} style={{ ...sectionStyle, paddingBottom: 8 }}>
             <h2 style={sectionTitle}>Step 5: Interests</h2>
             <div
               className="interests-grid"
@@ -314,17 +355,13 @@ export default function SignUpPage() {
 
           {/* Actions */}
           <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-            <button
-              type="submit"
-              disabled={submitting}
-              style={primaryBtn(submitting)}
-            >
+            <button type="submit" disabled={submitting} style={primaryBtn(submitting)}>
               {submitting ? "Creating..." : "Create Account"}
             </button>
 
+            {/* Cancel → landing */}
             <button
               type="button"
-              className="btn-cancel"
               onClick={() => navigate("/")}
               disabled={submitting}
               style={secondaryBtn}
@@ -347,6 +384,34 @@ function Field({ label, children }) {
     </label>
   );
 }
+
+function PwRule({ ok, text }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span
+        aria-hidden
+        style={{
+          width: 10, height: 10, borderRadius: 9999,
+          background: ok ? "#39d98a" : "#555",
+          border: "1px solid #2d2d32",
+          display: "inline-block"
+        }}
+      />
+      <span style={{ color: ok ? "#c6ffdd" : "#aaa" }}>{text}</span>
+    </div>
+  );
+}
+
+const navBtn = {
+  width: "100%",
+  padding: "8px 0",
+  color: "#ffe259",
+  fontWeight: 700,
+  background: "#232326",
+  border: "1px solid #2d2d32",
+  borderRadius: 8,
+  cursor: "pointer",
+};
 
 const sectionStyle = {
   padding: "0 0 18px 0",
@@ -373,6 +438,17 @@ const inputStyle = {
   color: "#ffe259",
   fontSize: "1.05rem",
   outline: "none",
+};
+
+const pwHelpWrap = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2,minmax(0,1fr))",
+  gap: 8,
+  padding: "8px 10px",
+  border: "1px dashed #2d2d32",
+  borderRadius: 10,
+  background: "#0b0b0e",
+  marginTop: 8,
 };
 
 const primaryBtn = (disabled) => ({
