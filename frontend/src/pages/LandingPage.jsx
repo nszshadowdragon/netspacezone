@@ -1,8 +1,9 @@
+// frontend/src/pages/LandingPage.jsx
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";   // ✅ global auth
 
-// ✅ Ensure API_BASE is consistent across pages
+// ✅ Ensure API_BASE is consistent across pages (kept as reference)
 const API_BASE =
   import.meta.env.MODE === "production"
     ? "https://api.netspacezone.com"
@@ -37,7 +38,6 @@ export default function LandingPage() {
 
     setLoading(true);
     try {
-      // ✅ Login via AuthContext, which already uses API_BASE under the hood
       const loggedInUser = await login(identifier.trim(), password);
       if (loggedInUser) {
         navigate(`/profile/${loggedInUser.username}`, { replace: true });
@@ -49,175 +49,213 @@ export default function LandingPage() {
   };
 
   return (
-    <div style={wrap}>
-      <div style={shell}>
-        {/* Left side */}
-        <div style={leftCol}>
-          <img src="/assets/nsz-logo.png" alt="NetSpace Zone" style={logo} />
-          <h1 style={{ fontSize: "2rem", color: "#facc15", fontWeight: "bold" }}>
-            NetSpace Zone
-          </h1>
-          <p style={{ fontSize: "1.3rem", color: "#ccc" }}>
-            Where connection meets cosmos
-          </p>
-        </div>
+    <>
+      {/* Responsive CSS (scoped to this component) */}
+      <style>{`
+        :root { --gold: #facc15; }
+        .landing-wrap {
+          min-height: 100vh;
+          width: 100%;
+          background: #000;
+          color: var(--gold);
+          display: grid;
+          place-items: center;
+          padding: clamp(16px, 4vw, 48px);
+          overflow-x: hidden;
+        }
+        .landing-shell {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          width: 100%;
+          max-width: 1100px;
+          background: #111;
+          border-radius: 16px;
+          box-shadow: 0 0 24px rgba(250, 204, 21, 0.35);
+          overflow: hidden;
+        }
+        .landing-left, .landing-right {
+          padding: clamp(20px, 4vw, 48px);
+        }
+        .landing-left {
+          background: radial-gradient(1200px 600px at 10% -10%, rgba(0,255,255,.12), transparent 60%),
+                      radial-gradient(800px 400px at 110% 10%, rgba(74,0,224,.15), transparent 60%),
+                      linear-gradient(180deg,#000 0%, #111 100%);
+          display: grid;
+          align-content: center;
+          text-align: center;
+          gap: clamp(10px, 2vw, 16px);
+        }
+        .landing-logo {
+          width: clamp(140px, 30vw, 220px);
+          height: auto;
+          margin: 0 auto;
+          display: block;
+          object-fit: contain;
+          filter: drop-shadow(0 0 36px rgba(0,255,255,.5)) drop-shadow(0 2px 20px rgba(74,0,224,.53));
+          transform: rotate(-6deg);
+        }
+        .landing-title {
+          font-size: clamp(24px, 4vw, 36px);
+          font-weight: 800;
+          color: var(--gold);
+          margin: 0;
+        }
+        .landing-subtitle {
+          font-size: clamp(16px, 2.5vw, 20px);
+          color: #ccc;
+          margin: 0;
+        }
 
-        {/* Right side: login */}
-        <div style={rightCol}>
-          <h2 style={{ fontSize: "1.6rem", marginBottom: "1.5rem" }}>
-            Login to your account
-          </h2>
+        .landing-right {
+          background: #000;
+          display: grid;
+          align-content: center;
+          gap: clamp(12px, 2.5vw, 20px);
+        }
+        .landing-form label {
+          display: block;
+          font-weight: 700;
+          margin-bottom: 6px;
+        }
+        .landing-input {
+          width: 100%;
+          padding: clamp(10px, 2.5vw, 12px);
+          border-radius: 8px;
+          border: 1px solid #333;
+          background: #000;
+          color: var(--gold);
+          font-size: clamp(14px, 2.5vw, 16px);
+        }
+        .pw-wrap { position: relative; }
+        .show-btn {
+          position: absolute;
+          right: 10px;
+          top: 50%;
+          transform: translateY(-50%);
+          background: none;
+          border: none;
+          color: var(--gold);
+          font-weight: 700;
+          cursor: pointer;
+          padding: 0 4px;
+        }
+        .landing-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          margin-top: 10px;
+          flex-wrap: wrap;
+        }
+        .login-btn, .signup-btn {
+          margin-top: 16px;
+          padding: clamp(10px, 3vw, 14px);
+          width: 100%;
+          font-weight: 800;
+          border: none;
+          border-radius: 10px;
+          cursor: pointer;
+          font-size: clamp(14px, 2.8vw, 16px);
+        }
+        .login-btn { background: var(--gold); color: #111; }
+        .signup-btn { background: #0ff; color: #111; }
 
-          <form onSubmit={handleLogin}>
-            <label>Username or Email</label>
-            <input
-              type="text"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="Enter your username or email"
-              style={input}
-              autoComplete="username"
-            />
+        .divider {
+          margin: clamp(16px, 3vw, 28px) 0;
+          border: 0;
+          border-top: 1px solid #333;
+        }
 
-            <label style={{ marginTop: "1rem" }}>Password</label>
-            <div style={{ position: "relative" }}>
+        /* --- Responsive layout tweaks --- */
+        @media (max-width: 980px) {
+          .landing-shell { grid-template-columns: 1fr; }
+          .landing-left { order: 1; }
+          .landing-right { order: 2; }
+        }
+        @media (max-width: 520px) {
+          .landing-shell { border-radius: 12px; box-shadow: 0 0 16px rgba(250,204,21,.25); }
+          .landing-row { justify-content: flex-start; }
+        }
+      `}</style>
+
+      <div className="landing-wrap">
+        <div className="landing-shell">
+          {/* Left side (hero) */}
+          <div className="landing-left">
+            <img src="/assets/nsz-logo.png" alt="NetSpace Zone" className="landing-logo" />
+            <h1 className="landing-title">NetSpace Zone</h1>
+            <p className="landing-subtitle">Where connection meets cosmos</p>
+          </div>
+
+          {/* Right side (login) */}
+          <div className="landing-right">
+            <h2 style={{ fontSize: "clamp(18px, 3.8vw, 26px)", margin: 0 }}>Login to your account</h2>
+
+            <form className="landing-form" onSubmit={handleLogin}>
+              <label>Username or Email</label>
               <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
-                style={input}
-                autoComplete="current-password"
+                type="text"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="Enter your username or email"
+                className="landing-input"
+                autoComplete="username"
+                inputMode="email"
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                style={showBtn}
-              >
-                {showPassword ? "Hide" : "Show"}
-              </button>
-            </div>
 
-            <div style={row}>
-              <label style={{ display: "flex", alignItems: "center" }}>
+              <label style={{ marginTop: 12 }}>Password</label>
+              <div className="pw-wrap">
                 <input
-                  type="checkbox"
-                  checked={remember}
-                  onChange={(e) => setRemember(e.target.checked)}
-                  style={{ marginRight: 8 }}
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  className="landing-input"
+                  autoComplete="current-password"
                 />
-                Remember me
-              </label>
-              <a href="#" style={{ color: "#0ff", fontSize: "0.9rem" }}>
-                Forgot password?
-              </a>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="show-btn"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
 
-            <button type="submit" style={loginBtn} disabled={loading}>
-              {loading ? "Logging in..." : "Login"}
+              <div className="landing-row">
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => setRemember(e.target.checked)}
+                  />
+                  Remember me
+                </label>
+                <button
+                  type="button"
+                  onClick={() => navigate("/forgot-password")}
+                  style={{ background: "none", border: "none", color: "#0ff", cursor: "pointer", padding: 0, fontSize: "0.95rem" }}
+                >
+                  Forgot password?
+                </button>
+              </div>
+
+              <button type="submit" className="login-btn" disabled={loading}>
+                {loading ? "Logging in..." : "Login"}
+              </button>
+
+              {error && <p style={{ color: "#f87171", marginTop: 8 }}>{error}</p>}
+            </form>
+
+            <hr className="divider" />
+
+            <button onClick={() => navigate("/signup")} className="signup-btn">
+              Sign Up
             </button>
-
-            {error && (
-              <p style={{ color: "#f87171", marginTop: "0.8rem" }}>{error}</p>
-            )}
-          </form>
-
-          <hr style={{ margin: "2rem 0", borderColor: "#333" }} />
-
-          <button
-            onClick={() => navigate("/signup")}
-            style={{ ...loginBtn, backgroundColor: "#0ff" }}
-          >
-            Sign Up
-          </button>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
-
-/* ---- styles ---- */
-const wrap = {
-  minHeight: "100vh",
-  width: "100vw",
-  background: "#000",
-  color: "#facc15",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  fontFamily: "Arial, sans-serif",
-  padding: "2rem",
-  overflowX: "hidden",
-};
-const shell = {
-  display: "flex",
-  flexDirection: "row",
-  width: "100%",
-  maxWidth: "1000px",
-  background: "#111",
-  borderRadius: "12px",
-  boxShadow: "0 0 20px #facc15",
-  overflow: "hidden",
-};
-const leftCol = {
-  flex: 1,
-  background: "linear-gradient(to bottom right, #000, #111)",
-  padding: "3rem",
-  display: "flex",
-  flexDirection: "column",
-  justifyContent: "center",
-  textAlign: "center",
-};
-const rightCol = {
-  flex: 1,
-  background: "#000",
-  padding: "3rem",
-  display: "flex",
-  flexDirection: "column",
-  justifyContent: "center",
-};
-const logo = {
-  height: "180px",
-  marginBottom: "1rem",
-  display: "inline-block",
-  objectFit: "contain",
-  filter: "drop-shadow(0 0 36px #0ff8) drop-shadow(0 2px 20px #4a00e088)",
-  transform: "rotate(-7deg)",
-};
-const input = {
-  width: "100%",
-  padding: "0.6rem",
-  borderRadius: "6px",
-  border: "1px solid #333",
-  background: "#000",
-  color: "#facc15",
-  fontSize: "1rem",
-  marginBottom: "0.5rem",
-};
-const showBtn = {
-  position: "absolute",
-  right: 10,
-  top: "50%",
-  transform: "translateY(-50%)",
-  background: "none",
-  border: "none",
-  color: "#facc15",
-  cursor: "pointer",
-};
-const row = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginTop: "1rem",
-};
-const loginBtn = {
-  marginTop: "1.5rem",
-  padding: "0.75rem",
-  width: "100%",
-  background: "#facc15",
-  color: "#000",
-  fontWeight: "bold",
-  border: "none",
-  borderRadius: "6px",
-  cursor: "pointer",
-};
