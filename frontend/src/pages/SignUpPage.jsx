@@ -156,16 +156,14 @@ export default function SignUpPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `Signup failed (${res.status})`);
 
-      // try to ensure cookie session is valid
+      // ensure cookie/session is recognized to avoid flicker
       try {
         await fetch(ME_URL, { credentials: "include" });
       } catch {}
 
       const dest = data?.user?.username ? `/profile/${data.user.username}` : "/profile";
-      navigate(dest, { replace: true });
-      setTimeout(() => {
-        if (window.location.pathname !== dest) window.location.href = dest;
-      }, 120);
+      // hard navigation prevents a momentary redirect to landing
+      window.location.replace(dest);
     } catch (err) {
       setErrors((p) => ({ ...p, submit: err.message || "Signup failed" }));
     } finally {
