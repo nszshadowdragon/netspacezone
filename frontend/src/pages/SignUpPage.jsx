@@ -47,7 +47,7 @@ export default function SignUpPage() {
     fd.append("birthday", form.birthday);
     fd.append("referral", form.referral.trim());
     fd.append("interests", interests.join(",")); // server splits by comma
-    fd.append("profilePic", profilePicFile);     // <-- critical: must be "profilePic"
+    fd.append("profilePic", profilePicFile);     // must be "profilePic"
 
     try {
       setSubmitting(true);
@@ -64,8 +64,9 @@ export default function SignUpPage() {
       }
 
       await res.json().catch(() => null);
-      // go straight to profile page after success
+      // success: route to profile
       navigate("/profile", { replace: true });
+
     } catch (err) {
       setError(err.message || "Signup failed");
     } finally {
@@ -82,79 +83,105 @@ export default function SignUpPage() {
   ];
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
-      <h1>Create your account</h1>
+    <div className="signup-container" style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
+      <h1 className="signup-title">Create your account</h1>
 
-      <form onSubmit={submit}>
+      <form onSubmit={submit} className="signup-form">
         {/* Step 1 */}
-        <h2>Step 1: Basic Info</h2>
-        <label>
-          Username
-          <input name="username" value={form.username} onChange={onChange} />
-        </label>
-        <label>
-          Email
-          <input type="email" name="email" value={form.email} onChange={onChange} />
-        </label>
+        <section className="signup-section">
+          <h2 className="signup-step">Step 1: Basic Info</h2>
+          <label className="field">
+            Username
+            <input name="username" value={form.username} onChange={onChange} />
+          </label>
+          <label className="field">
+            Email
+            <input type="email" name="email" value={form.email} onChange={onChange} />
+          </label>
+        </section>
 
         {/* Step 2 */}
-        <h2>Step 2: Security</h2>
-        <label>
-          Password
-          <input type="password" name="password" value={form.password} onChange={onChange} />
-        </label>
+        <section className="signup-section">
+          <h2 className="signup-step">Step 2: Security</h2>
+          <label className="field">
+            Password
+            <input type="password" name="password" value={form.password} onChange={onChange} />
+          </label>
+        </section>
 
         {/* Step 3 */}
-        <h2>Step 3: Profile</h2>
-        <label>
-          First name
-          <input name="firstName" value={form.firstName} onChange={onChange} />
-        </label>
-        <label>
-          Last name
-          <input name="lastName" value={form.lastName} onChange={onChange} />
-        </label>
-        <label>
-          Birthday
-          <input type="date" name="birthday" value={form.birthday} onChange={onChange} />
-        </label>
-        <label>
-          Profile Image
-          <input
-            type="file"
-            name="profilePic"
-            accept="image/*"
-            onChange={(e) => setProfilePicFile(e.target.files?.[0] || null)}
-          />
-        </label>
+        <section className="signup-section">
+          <h2 className="signup-step">Step 3: Profile</h2>
+          <label className="field">
+            First name
+            <input name="firstName" value={form.firstName} onChange={onChange} />
+          </label>
+          <label className="field">
+            Last name
+            <input name="lastName" value={form.lastName} onChange={onChange} />
+          </label>
+          <label className="field">
+            Birthday
+            <input type="date" name="birthday" value={form.birthday} onChange={onChange} />
+          </label>
+          <label className="field">
+            Profile Image
+            <input
+              type="file"
+              name="profilePic"
+              accept="image/*"
+              onChange={(e) => setProfilePicFile(e.target.files?.[0] || null)}
+            />
+          </label>
+        </section>
 
         {/* Step 4 */}
-        <h2>Step 4: Referral</h2>
-        <label>
-          Referral Code
-          <input name="referral" value={form.referral} onChange={onChange} />
-        </label>
+        <section className="signup-section">
+          <h2 className="signup-step">Step 4: Referral</h2>
+          <label className="field">
+            Referral Code
+            <input name="referral" value={form.referral} onChange={onChange} />
+          </label>
+        </section>
 
         {/* Step 5 */}
-        <h2>Step 5: Interests</h2>
-        <fieldset style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
-          {ALL_INTERESTS.map((i) => (
-            <label key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <input
-                type="checkbox"
-                checked={interests.includes(i)}
-                onChange={() => toggleInterest(i)}
-              />
-              {i}
-            </label>
-          ))}
-        </fieldset>
+        <section className="signup-section">
+          <h2 className="signup-step">Step 5: Interests</h2>
+          <fieldset
+            className="interests-grid"
+            style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}
+          >
+            {ALL_INTERESTS.map((i) => (
+              <label key={i} className="interest-item" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={interests.includes(i)}
+                  onChange={() => toggleInterest(i)}
+                />
+                {i}
+              </label>
+            ))}
+          </fieldset>
+        </section>
 
-        {error && <p style={{ color: "salmon" }}>{error}</p>}
+        {error && <p className="signup-error" style={{ color: "salmon" }}>{error}</p>}
 
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Creating..." : "Create Account"}
-        </button>
+        {/* Actions: Create + Cancel */}
+        <div className="signup-actions" style={{ display: "flex", gap: 12, marginTop: 16 }}>
+          <button type="submit" className="btn btn-primary" disabled={submitting}>
+            {submitting ? "Creating..." : "Create Account"}
+          </button>
+
+          {/* Cancel button back to landing */}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => navigate("/")}
+            disabled={submitting}
+          >
+            Cancel
+          </button>
+        </div>
       </form>
     </div>
   );
