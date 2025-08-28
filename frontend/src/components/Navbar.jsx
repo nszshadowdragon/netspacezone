@@ -1,11 +1,20 @@
+// frontend/src/components/Navbar.jsx
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import SearchBar from "./SearchBar";
 import { useAuth } from "../context/AuthContext";   // ✅ global auth
 
+const API_ORIGIN = "https://api.netspacezone.com";
+function resolveAvatar(src) {
+  if (!src) return "";
+  if (/^(data:|https?:\/\/)/i.test(src)) return src; // data URL or absolute
+  const path = src.startsWith("/") ? src : `/${src}`;
+  return `${API_ORIGIN}${path}`; // /uploads/... -> API host
+}
+
 export default function Navbar({ unreadCount }) {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();   // ✅ bring in logout function
+  const { user, logout } = useAuth();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [showAllPopup, setShowAllPopup] = useState(false);
@@ -40,6 +49,9 @@ export default function Navbar({ unreadCount }) {
     { name: "Podcast", path: "/podcast" },
     { name: "CreatorsHub", path: "/creatorshub" },
   ];
+
+  const rawPic = (user?.profilePic || user?.profileImage || "").trim();
+  const avatarSrc = rawPic ? resolveAvatar(rawPic) : "/assets/default-avatar.png";
 
   return (
     <div
@@ -131,14 +143,17 @@ export default function Navbar({ unreadCount }) {
       {/* User Info */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
         <img
-          src={user?.profilePic && user.profilePic.trim() !== "" ? user.profilePic : "/assets/default-avatar.png"}
+          src={avatarSrc}
           alt="Profile"
+          crossOrigin="anonymous"
+          onClick={() => user?.username && navigate(`/profile/${user.username}`)}
           style={{
             width: 48,
             height: 48,
             borderRadius: "50%",
             objectFit: "cover",
             border: `2px solid ${GOLD}`,
+            cursor: user?.username ? "pointer" : "default",
           }}
         />
         <div
@@ -184,23 +199,24 @@ export default function Navbar({ unreadCount }) {
             }}
           >
             {/* 🚫 TEMPORARILY HIDE ALL NAVIGATION LINKS */}
-            {false && navPages.map((page) => (
-              <div
-                key={page.path}
-                onClick={() => {
-                  navigate(page.path);
-                  setMenuOpen(false);
-                }}
-                style={{
-                  padding: "12px 18px",
-                  cursor: "pointer",
-                  borderBottom: `1px solid ${GOLD}`,
-                  color: GOLD,
-                }}
-              >
-                {page.name}
-              </div>
-            ))}
+            {false &&
+              navPages.map((page) => (
+                <div
+                  key={page.path}
+                  onClick={() => {
+                    navigate(page.path);
+                    setMenuOpen(false);
+                  }}
+                  style={{
+                    padding: "12px 18px",
+                    cursor: "pointer",
+                    borderBottom: `1px solid ${GOLD}`,
+                    color: GOLD,
+                  }}
+                >
+                  {page.name}
+                </div>
+              ))}
 
             {/* ✅ Keep Logout available */}
             <div
