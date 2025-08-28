@@ -1,4 +1,4 @@
-﻿{
+{
   "rewrites": [
     { "source": "/api/(.*)", "destination": "https://api.netspacezone.com/api/$1" }
   ]
