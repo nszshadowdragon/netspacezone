@@ -1,50 +1,58 @@
 // backend/server.js
-require("dotenv").config();
-const path = require("path");
 const express = require("express");
-const cookieParser = require("cookie-parser");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const path = require("path");
+const mongoose = require("mongoose");
 
 const app = express();
 
-/* ---------- CORS ---------- */
-const WHITELIST = [
+/* --- Middleware --- */
+const ORIGINS = [
   "https://netspacezone.com",
   "https://www.netspacezone.com",
   "http://localhost:5173",
-  "http://localhost:3000",
+  "http://127.0.0.1:5173",
 ];
-const corsOptions = {
-  origin(origin, cb) {
-    // allow same-origin/fetches with no origin (curl, SSR)
-    if (!origin || WHITELIST.includes(origin)) return cb(null, true);
-    cb(new Error(`Not allowed by CORS: ${origin}`));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
-app.use(cors(corsOptions));
-// make sure every preflight gets an OK
-app.options("*", cors(corsOptions));
 
-/* ---------- Body & cookies ---------- */
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(cors({ origin: ORIGINS, credentials: true }));
+app.use(express.json({ limit: "10mb" })); // allow data-URL images if needed
 app.use(cookieParser());
-
-/* ---------- Static for uploaded images ---------- */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-/* ---------- Routes ---------- */
-const authRoutes = require("./routes/auth"); // this file is below
-app.use("/api/auth", authRoutes);
+/* --- Routes --- */
+app.get("/healthz", (_req, res) =>
+  res.json({ ok: true, db: mongoose.connection.readyState })
+);
 
-/* ---------- Health ---------- */
-app.get("/health", (req, res) => res.json({ ok: true }));
+app.use("/api/auth", require("./routes/auth"));
 
-/* ---------- Start ---------- */
+/* --- DB + Server start (wait for Mongo) --- */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`✅ Server listening on ${PORT}`);
-});
+const MONGO_URI =
+  process.env.MONGODB_URI || process.env.MONGO_URI || process.env.MONGO_URL;
+
+if (!MONGO_URI) {
+  console.error("❌ Missing MONGODB_URI (or MONGO_URI/MONGO_URL).");
+  process.exit(1);
+}
+
+mongoose.set("strictQuery", true);
+// Avoid query buffering errors before connection:
+mongoose.set("bufferCommands", false);
+
+mongoose
+  .connect(MONGO_URI, {
+    serverSelectionTimeoutMS: 15000,
+    connectTimeoutMS: 15000,
+  })
+  .then(() => {
+    console.log("✅ MongoDB connected");
+    app.listen(PORT, () => console.log(`✅ API listening on :${PORT}`));
+  })
+  .catch((err) => {
+    console.error("❌ MongoDB connection failed:", err.message);
+    process.exit(1);
+  });
+
+module.exports = app;
