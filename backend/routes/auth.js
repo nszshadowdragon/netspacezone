@@ -1,5 +1,4 @@
-// backend/routes/auth.js
-const express = require("express");
+﻿const express = require("express");
 const router = express.Router();
 
 const fs = require("fs");
@@ -40,7 +39,6 @@ function saveBufferToUploads(buffer, originalName) {
 }
 
 function saveDataUrlToUploads(dataUrl, fallbackName = "image.png") {
-  // data:[mime];base64,AAAA...
   const m = /^data:(.+?);base64,(.+)$/i.exec(dataUrl || "");
   if (!m) throw new Error("Invalid image data URL");
   const mime = m[1];
@@ -74,7 +72,7 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Accept either multipart file or data URL string
+    // Accept either multipart file (preferred) or data URL string
     let imagePath;
     if (req.file) {
       imagePath = saveBufferToUploads(req.file.buffer, req.file.originalname);
@@ -129,7 +127,6 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
       });
   } catch (err) {
     console.error("Signup error:", err);
-    // Surface the reason while we're debugging
     res.status(500).json({ error: err.message || "Signup failed" });
   }
 });
