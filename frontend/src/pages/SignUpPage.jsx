@@ -1,11 +1,11 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 // Runtime-safe URL fixer: always send to api.netspacezone.com in prod
 function apiUrl(path) {
   try {
     const u = new URL(path, window.location.origin);
-    // If we’re on the web app host, rewrite to API host
+    // If weâ€™re on the web app host, rewrite to API host
     if (/^(www\.)?netspacezone\.com$/i.test(u.hostname)) {
       u.protocol = "https:";
       u.hostname = "api.netspacezone.com";
@@ -171,3 +171,4 @@ export default function SignUpPage() {
     </div>
   );
 }
+
