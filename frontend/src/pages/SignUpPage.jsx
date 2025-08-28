@@ -63,7 +63,7 @@ export default function SignUpPage() {
     fd.append("interests", interests.join(",")); // server splits by comma
     fd.append("profilePic", profilePic); // key must be profilePic
 
-    const url = apiUrl("/api/auth/signup");
+    const url = "https://api.netspacezone.com/api/auth/signup";
 
     try {
       setSubmitting(true);
