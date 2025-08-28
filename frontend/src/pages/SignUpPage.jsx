@@ -1,13 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-/** 
- * Always hit the API host in prod to avoid 405s from the frontend.
- * In dev, you can set VITE_API_BASE=http://localhost:5000 (or your proxy).
- */
-const API_BASE =
-  (import.meta.env.VITE_API_BASE && import.meta.env.VITE_API_BASE.trim()) ||
-  (import.meta.env.PROD ? "https://api.netspacezone.com" : "");
+const SIGNUP_URL = "https://api.netspacezone.com/api/auth/signup";
 
 export default function SignUpPage() {
   const navigate = useNavigate();
@@ -22,7 +16,7 @@ export default function SignUpPage() {
     referral: "",
   });
   const [interests, setInterests] = useState([]);
-  const [profilePic, setProfilePic] = useState(null);
+  const [profilePicFile, setProfilePicFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -34,17 +28,16 @@ export default function SignUpPage() {
       prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
     );
 
-  const handleFile = (e) => setProfilePic(e.target.files?.[0] || null);
-
   const submit = async (e) => {
     e.preventDefault();
     setError("");
 
-    if (!profilePic) {
+    if (!profilePicFile) {
       setError("Please choose a profile image.");
       return;
     }
 
+    // Build multipart body (do NOT set Content-Type manually)
     const fd = new FormData();
     fd.append("username", form.username.trim());
     fd.append("email", form.email.trim());
@@ -54,35 +47,25 @@ export default function SignUpPage() {
     fd.append("birthday", form.birthday);
     fd.append("referral", form.referral.trim());
     fd.append("interests", interests.join(",")); // server splits by comma
-    fd.append("profilePic", profilePic); // <-- must be 'profilePic'
-
-    const url = `${API_BASE}/api/auth/signup`;
+    fd.append("profilePic", profilePicFile);     // <-- critical: must be "profilePic"
 
     try {
       setSubmitting(true);
 
-      const res = await fetch(url, {
+      const res = await fetch(SIGNUP_URL, {
         method: "POST",
+        credentials: "include",
         body: fd,
-        credentials: "include", // send/receive auth cookie
       });
 
       if (!res.ok) {
-        if (res.status === 405) {
-          throw new Error(
-            "Signup endpoint returned 405. Make sure requests go to https://api.netspacezone.com"
-          );
-        }
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error || `Signup failed (${res.status})`);
       }
 
-      // success -> route straight to profile page
-      // If your app uses /profile/:username, change to:
-      //   const data = await res.json(); navigate(`/profile/${data?.user?.username || form.username}`, { replace: true });
       await res.json().catch(() => null);
+      // go straight to profile page after success
       navigate("/profile", { replace: true });
-
     } catch (err) {
       setError(err.message || "Signup failed");
     } finally {
@@ -99,54 +82,60 @@ export default function SignUpPage() {
   ];
 
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto", padding: 24 }}>
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
       <h1>Create your account</h1>
 
       <form onSubmit={submit}>
+        {/* Step 1 */}
         <h2>Step 1: Basic Info</h2>
         <label>
           Username
           <input name="username" value={form.username} onChange={onChange} />
         </label>
-
         <label>
           Email
           <input type="email" name="email" value={form.email} onChange={onChange} />
         </label>
 
+        {/* Step 2 */}
         <h2>Step 2: Security</h2>
         <label>
           Password
           <input type="password" name="password" value={form.password} onChange={onChange} />
         </label>
 
+        {/* Step 3 */}
         <h2>Step 3: Profile</h2>
         <label>
           First name
           <input name="firstName" value={form.firstName} onChange={onChange} />
         </label>
-
         <label>
           Last name
           <input name="lastName" value={form.lastName} onChange={onChange} />
         </label>
-
         <label>
           Birthday
           <input type="date" name="birthday" value={form.birthday} onChange={onChange} />
         </label>
-
         <label>
           Profile Image
-          <input type="file" accept="image/*" onChange={handleFile} />
+          <input
+            type="file"
+            name="profilePic"
+            accept="image/*"
+            onChange={(e) => setProfilePicFile(e.target.files?.[0] || null)}
+          />
         </label>
 
+        {/* Step 4 */}
         <h2>Step 4: Referral</h2>
         <label>
           Referral Code
           <input name="referral" value={form.referral} onChange={onChange} />
         </label>
 
+        {/* Step 5 */}
         <h2>Step 5: Interests</h2>
         <fieldset style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
           {ALL_INTERESTS.map((i) => (
@@ -170,4 +159,3 @@ export default function SignUpPage() {
     </div>
   );
 }
-
