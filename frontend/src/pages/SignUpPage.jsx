@@ -1,14 +1,11 @@
 // frontend/src/pages/SignUpPage.jsx
 import React, { useRef, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
 
-// Always hit the API host (prevents 405s on the app host)
 const API_BASE = "https://api.netspacezone.com";
 const SIGNUP_URL = `${API_BASE}/api/auth/signup`;
 const ME_URL = `${API_BASE}/api/auth/me`;
 
-// (kept from your original screen)
 const INTERESTS = [
   "Tech","Gaming","Music","Movies","Fitness","Travel","Anime","Fashion",
   "Food","Art","Science","Education","Coding","Sports","Business","News",
@@ -24,7 +21,6 @@ const SECTIONS = [
 
 export default function SignUpPage() {
   const navigate = useNavigate();
-  const { login } = useAuth?.() || { login: null };
 
   const refs = {
     basic: useRef(null),
@@ -35,7 +31,7 @@ export default function SignUpPage() {
 
   const [form, setForm] = useState({
     username: "",
-    usernameAvailable: null, // kept; harmless if API not present
+    usernameAvailable: null,
     email: "",
     birthday: "",
     firstName: "",
@@ -47,28 +43,34 @@ export default function SignUpPage() {
     favoriteQuote: "",
     referral: "",
   });
-  const [interests, setInterests] = useState<string[]>([]);
-  const [profilePic, setProfilePic] = useState<File | null>(null);
+  const [interests, setInterests] = useState([]);
+  const [profilePic, setProfilePic] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<Record<string,string>>({});
+  const [errors, setErrors] = useState({});
 
-  // Username availability (no-op if endpoint doesn’t exist)
-  async function checkUsername(username: string) {
-    if (username.length < 3) return setForm(f => ({ ...f, usernameAvailable: null }));
+  // optional username availability check (ignored if endpoint not present)
+  async function checkUsername(username) {
+    if (username.length < 3) {
+      setForm((f) => ({ ...f, usernameAvailable: null }));
+      return;
+    }
     try {
-      const r = await fetch(`${API_BASE}/api/check-username?username=${encodeURIComponent(username)}`, { credentials: "include" });
-      if (!r.ok) return setForm(f => ({ ...f, usernameAvailable: null }));
+      const r = await fetch(
+        `${API_BASE}/api/check-username?username=${encodeURIComponent(username)}`,
+        { credentials: "include" }
+      );
+      if (!r.ok) return setForm((f) => ({ ...f, usernameAvailable: null }));
       const j = await r.json();
-      setForm(f => ({ ...f, usernameAvailable: !!j?.available }));
+      setForm((f) => ({ ...f, usernameAvailable: !!j?.available }));
     } catch {
-      setForm(f => ({ ...f, usernameAvailable: null }));
+      setForm((f) => ({ ...f, usernameAvailable: null }));
     }
   }
 
   const onChange = (e) => {
     const { name, value, type, files, checked } = e.target;
     if (type === "file") {
-      setProfilePic(files?.[0] ?? null);
+      setProfilePic(files?.[0] || null);
       return;
     }
     if (type === "checkbox" && name === "interests") {
@@ -82,12 +84,14 @@ export default function SignUpPage() {
     }
   };
 
-  // age helper (from your previous screen)
-  const age = form.birthday
-    ? Math.max(0, new Date(Date.now() - new Date(form.birthday).getTime()).getUTCFullYear() - 1970)
-    : "";
+  const age =
+    form.birthday
+      ? Math.max(
+          0,
+          new Date(Date.now() - new Date(form.birthday).getTime()).getUTCFullYear() - 1970
+        )
+      : "";
 
-  // password rules + show/hide
   const [showPass, setShowPass] = useState(false);
   const [showConf, setShowConf] = useState(false);
   const pw = form.password || "";
@@ -100,8 +104,8 @@ export default function SignUpPage() {
   ];
   const pwOK = pwRules.every((r) => r.ok) && form.confirmPassword === pw;
 
-  function validate(): boolean {
-    const e: Record<string,string> = {};
+  function validate() {
+    const e = {};
     if (!form.username) e.username = "Username required";
     else if (form.username.length < 3) e.username = "Min 3 chars";
     else if (form.usernameAvailable === false) e.username = "Not available";
@@ -128,7 +132,6 @@ export default function SignUpPage() {
     setLoading(true);
 
     try {
-      // multipart payload expected by the current API
       const fd = new FormData();
       fd.append("username", form.username.trim());
       fd.append("email", form.email.trim());
@@ -138,8 +141,8 @@ export default function SignUpPage() {
       fd.append("birthday", form.birthday);
       fd.append("referral", form.referral.trim());
       fd.append("interests", interests.join(","));
-      fd.append("profilePic", profilePic as Blob); // key required by backend
-      // keep optional screen fields (won’t hurt if backend ignores)
+      fd.append("profilePic", profilePic);
+      // optional extras (safe to include even if backend ignores)
       fd.append("securityQuestion", form.securityQuestion);
       fd.append("securityAnswer", form.securityAnswer);
       fd.append("favoriteQuote", form.favoriteQuote);
@@ -151,27 +154,18 @@ export default function SignUpPage() {
       });
 
       const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `Signup failed (${res.status})`);
 
-      if (!res.ok) {
-        throw new Error(data?.error || `Signup failed (${res.status})`);
-      }
-
-      // confirm session & populate auth context (mirrors your old flow)
+      // try to ensure cookie session is valid
       try {
-        const meRes = await fetch(ME_URL, { credentials: "include" });
-        if (meRes.ok) {
-          const me = await meRes.json();
-          if (login) await login({ user: me?.user });
-        }
+        await fetch(ME_URL, { credentials: "include" });
       } catch {}
 
-      // ✅ Route to /profile/:username if available, else /profile
       const dest = data?.user?.username ? `/profile/${data.user.username}` : "/profile";
       navigate(dest, { replace: true });
-      // hard fallback in case router state is mid-transition
       setTimeout(() => {
-        if (location.pathname !== dest) window.location.href = dest;
-      }, 150);
+        if (window.location.pathname !== dest) window.location.href = dest;
+      }, 120);
     } catch (err) {
       setErrors((p) => ({ ...p, submit: err.message || "Signup failed" }));
     } finally {
@@ -185,39 +179,13 @@ export default function SignUpPage() {
   }, []);
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        width: "100%",
-        background: "#000",
-        color: "#ffe259",
-        display: "flex",
-        gap: 16,
-        padding: 16,
-      }}
-    >
-      {/* Left nav (section jump) */}
-      <nav
-        style={{
-          position: "sticky",
-          top: 24,
-          alignSelf: "flex-start",
-          width: 140,
-          background: "#15151a",
-          borderRadius: 10,
-          boxShadow: "0 2px 10px #444a",
-          padding: 10,
-          height: "fit-content",
-        }}
-      >
+    <div style={{ minHeight: "100vh", width: "100%", background: "#000", color: "#ffe259", display: "flex", gap: 16, padding: 16 }}>
+      {/* Left nav */}
+      <nav style={{ position: "sticky", top: 24, alignSelf: "flex-start", width: 140, background: "#15151a", borderRadius: 10, boxShadow: "0 2px 10px #444a", padding: 10, height: "fit-content" }}>
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
           {SECTIONS.map((s) => (
             <li key={s.key} style={{ marginBottom: 10 }}>
-              <button
-                type="button"
-                onClick={() => refs[s.key].current?.scrollIntoView({ block: "start" })}
-                style={navBtn}
-              >
+              <button type="button" onClick={() => refs[s.key].current?.scrollIntoView({ block: "start" })} style={navBtn}>
                 {s.label}
               </button>
             </li>
@@ -227,56 +195,30 @@ export default function SignUpPage() {
 
       {/* Form */}
       <div style={{ flex: 1, maxWidth: 900, margin: "0 auto" }}>
-        <h1 style={{ margin: "8px 0 16px 0", fontSize: "2rem", fontWeight: 800 }}>
-          Create your account
-        </h1>
+        <h1 style={{ margin: "8px 0 16px 0", fontSize: "2rem", fontWeight: 800 }}>Create your account</h1>
 
         <form onSubmit={submit} autoComplete="off" style={{ color: "#ffe259" }}>
-          {/* Step 1: Basic Info */}
+          {/* Step 1 */}
           <section ref={refs.basic} style={sectionStyle}>
             <h2 style={sectionTitle}>Step 1: Basic Info</h2>
 
             <Field label="Username (required)">
-              <input
-                name="username"
-                value={form.username}
-                onChange={onChange}
-                style={inputStyle}
-                autoComplete="username"
-              />
+              <input name="username" value={form.username} onChange={onChange} style={inputStyle} autoComplete="username" />
             </Field>
             {form.username.length > 2 && (
-              <div style={{
-                color:
-                  form.usernameAvailable === null ? "#aaa" :
-                  form.usernameAvailable ? "#16ff80" : "#fa6c6c",
-                fontWeight: 700, fontSize: "0.96rem", marginTop: -8, marginBottom: 8
-              }}>
+              <div style={{ color: form.usernameAvailable === null ? "#aaa" : form.usernameAvailable ? "#16ff80" : "#fa6c6c", fontWeight: 700, fontSize: "0.96rem", marginTop: -8, marginBottom: 8 }}>
                 {form.usernameAvailable === null ? "" : form.usernameAvailable ? "Available" : "Not available"}
               </div>
             )}
             {errors.username && <Err>{errors.username}</Err>}
 
             <Field label="Email (required)">
-              <input
-                type="email"
-                name="email"
-                value={form.email}
-                onChange={onChange}
-                style={inputStyle}
-                autoComplete="email"
-              />
+              <input type="email" name="email" value={form.email} onChange={onChange} style={inputStyle} autoComplete="email" />
             </Field>
             {errors.email && <Err>{errors.email}</Err>}
 
             <Field label="Birthday (required, 18+)">
-              <input
-                type="date"
-                name="birthday"
-                value={form.birthday}
-                onChange={onChange}
-                style={inputStyle}
-              />
+              <input type="date" name="birthday" value={form.birthday} onChange={onChange} style={inputStyle} />
             </Field>
             {!!form.birthday && (
               <div style={{ fontSize: "0.98rem", marginTop: -4, color: +age < 18 ? "#f87171" : "#16ff80" }}>
@@ -295,30 +237,19 @@ export default function SignUpPage() {
             </div>
           </section>
 
-          {/* Step 2: Security */}
+          {/* Step 2 */}
           <section ref={refs.security} style={sectionStyle}>
             <h2 style={sectionTitle}>Step 2: Security</h2>
 
             <div style={{ position: "relative", marginBottom: 6 }}>
               <Field label="Password (required)">
-                <input
-                  type={showPass ? "text" : "password"}
-                  name="password"
-                  value={form.password}
-                  onChange={onChange}
-                  style={inputStyle}
-                  autoComplete="new-password"
-                />
+                <input type={showPass ? "text" : "password"} name="password" value={form.password} onChange={onChange} style={inputStyle} autoComplete="new-password" />
               </Field>
-              <button
-                type="button"
-                onClick={() => setShowPass(v => !v)}
-                style={showBtn}
-                tabIndex={-1}
-              >
+              <button type="button" onClick={() => setShowPass((v) => !v)} style={showBtn} tabIndex={-1}>
                 {showPass ? "Hide" : "Show"}
               </button>
             </div>
+
             <ul style={pwList}>
               {pwRules.map((r) => (
                 <li key={r.label} style={{ color: r.ok ? "#16ff80" : "#fa6c6c" }}>
@@ -329,21 +260,9 @@ export default function SignUpPage() {
 
             <div style={{ position: "relative" }}>
               <Field label="Confirm Password (required)">
-                <input
-                  type={showConf ? "text" : "password"}
-                  name="confirmPassword"
-                  value={form.confirmPassword}
-                  onChange={onChange}
-                  style={inputStyle}
-                  autoComplete="new-password"
-                />
+                <input type={showConf ? "text" : "password"} name="confirmPassword" value={form.confirmPassword} onChange={onChange} style={inputStyle} autoComplete="new-password" />
               </Field>
-              <button
-                type="button"
-                onClick={() => setShowConf(v => !v)}
-                style={showBtn}
-                tabIndex={-1}
-              >
+              <button type="button" onClick={() => setShowConf((v) => !v)} style={showBtn} tabIndex={-1}>
                 {showConf ? "Hide" : "Show"}
               </button>
             </div>
@@ -359,13 +278,18 @@ export default function SignUpPage() {
             {errors.confirmPassword && <Err>{errors.confirmPassword}</Err>}
           </section>
 
-          {/* Step 3: Profile */}
+          {/* Step 3 */}
           <section ref={refs.profile} style={sectionStyle}>
             <h2 style={sectionTitle}>Step 3: Profile</h2>
 
             <label style={{ display: "block", marginBottom: 8, fontWeight: 700 }}>Profile Image (required)</label>
-            <input type="file" name="profilePic" accept="image/*" onChange={onChange}
-              style={{ ...inputStyle, padding: 8, border: "1.5px solid #3c3836" }}/>
+            <input
+              type="file"
+              name="profilePic"
+              accept="image/*"
+              onChange={onChange}
+              style={{ ...inputStyle, padding: 8, border: "1.5px solid #3c3836" }}
+            />
             {profilePic && (
               <div style={{ marginTop: 8 }}>
                 <img
@@ -387,9 +311,17 @@ export default function SignUpPage() {
               <label style={{ fontWeight: 700 }}>Choose up to 25 Interests</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 7 }}>
                 {INTERESTS.map((i) => (
-                  <label key={i}
-                    style={{ background: interests.includes(i) ? "#0ff" : "#232326", color: "#121214",
-                             borderRadius: 7, fontWeight: 700, padding: "4px 10px", cursor: "pointer" }}>
+                  <label
+                    key={i}
+                    style={{
+                      background: interests.includes(i) ? "#0ff" : "#232326",
+                      color: "#121214",
+                      borderRadius: 7,
+                      fontWeight: 700,
+                      padding: "4px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
                     <input
                       type="checkbox"
                       name="interests"
@@ -411,7 +343,7 @@ export default function SignUpPage() {
             </div>
           </section>
 
-          {/* Step 4: Referral */}
+          {/* Step 4 */}
           <section ref={refs.referral} style={sectionStyle}>
             <h2 style={sectionTitle}>Step 4: Referral</h2>
             <Field label="Referral Code (optional)">
@@ -419,16 +351,10 @@ export default function SignUpPage() {
             </Field>
           </section>
 
-          {/* Footer actions */}
           {errors.submit && <Err>{errors.submit}</Err>}
 
           <div style={{ display: "flex", gap: 12, marginTop: 10 }}>
-            <button
-              type="button"
-              onClick={() => navigate("/")}
-              disabled={loading}
-              style={secondaryBtn}
-            >
+            <button type="button" onClick={() => navigate("/")} disabled={loading} style={secondaryBtn}>
               Cancel
             </button>
             <button type="submit" disabled={loading} style={primaryBtn(loading)}>
@@ -441,7 +367,7 @@ export default function SignUpPage() {
   );
 }
 
-/* ---------- UI bits (match your look) ---------- */
+/* ---------- UI helpers ---------- */
 function Field({ label, children }) {
   return (
     <label style={{ display: "block", marginBottom: 12 }}>
