@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
+const sharp = require("sharp");
 
 const User = require("../models/User");
 const { verifyToken } = require("../middleware/authMiddleware");
@@ -12,7 +13,7 @@ const { verifyToken } = require("../middleware/authMiddleware");
 /* ---------- Multer: accept an image field named `profilePic` ---------- */
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.startsWith("image/")) {
       return cb(new Error("Only image files are allowed"));
@@ -38,14 +39,12 @@ function saveBufferToUploads(buffer, originalName) {
   return `/uploads/${filename}`;
 }
 
-function saveDataUrlToUploads(dataUrl, fallbackName = "image.png") {
-  const m = /^data:(.+?);base64,(.+)$/i.exec(dataUrl || "");
-  if (!m) throw new Error("Invalid image data URL");
-  const mime = m[1];
-  if (!/^image\//i.test(mime)) throw new Error("Only image data URLs are allowed");
-  const buf = Buffer.from(m[2], "base64");
-  const ext = mime.split("/")[1] || "png";
-  return saveBufferToUploads(buf, `profile.${ext}`);
+async function optimizeToJpeg(buf) {
+  return sharp(buf)
+    .rotate()
+    .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toBuffer();
 }
 
 function signJwt(payload) {
@@ -75,9 +74,14 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
     // Accept either multipart file (preferred) or data URL string
     let imagePath;
     if (req.file) {
-      imagePath = saveBufferToUploads(req.file.buffer, req.file.originalname);
+      const optimized = await optimizeToJpeg(req.file.buffer);
+      imagePath = saveBufferToUploads(optimized, "profile.jpeg");
     } else if (typeof req.body.profilePic === "string" && req.body.profilePic.startsWith("data:image")) {
-      imagePath = saveDataUrlToUploads(req.body.profilePic);
+      const m = /^data:(.+?);base64,(.+)$/i.exec(req.body.profilePic);
+      if (!m) return res.status(400).json({ error: "Invalid image data URL" });
+      const buf = Buffer.from(m[2], "base64");
+      const optimized = await optimizeToJpeg(buf);
+      imagePath = saveBufferToUploads(optimized, "profile.jpeg");
     } else {
       return res.status(400).json({ error: "Profile image is required" });
     }
