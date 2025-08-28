@@ -1,3 +1,4 @@
+// frontend/src/main.jsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
@@ -7,11 +8,11 @@ import App from "./App"; // global wrapper with Navbar
 import Landing from "./pages/LandingPage.jsx";
 import Signup from "./pages/SignUpPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
-import { AuthProvider } from "./context/AuthContext";   // ✅ bring in global auth
+import { AuthProvider } from "./context/AuthContext";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <AuthProvider>   {/* ✅ now wraps the whole app */}
+    <AuthProvider>
       <BrowserRouter>
         <Routes>
           {/* No Navbar */}
@@ -20,6 +21,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
 
           {/* With Navbar via App wrapper */}
           <Route element={<App />}>
+            <Route path="/profile" element={<ProfilePage />} />
             <Route path="/profile/:username" element={<ProfilePage />} />
             {/* Add more routes with Navbar here */}
           </Route>
