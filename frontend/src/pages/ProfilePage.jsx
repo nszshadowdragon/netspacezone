@@ -1,24 +1,43 @@
-import React, { useState, useEffect } from "react";
+// frontend/src/pages/ProfilePage.jsx
+import React, { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";   // ✅ global auth
+import { useAuth } from "../context/AuthContext";
+
+// If backend returns /uploads/..., we must serve it from the API origin
+const API_ORIGIN = "https://api.netspacezone.com";
+
+function resolveImage(src) {
+  if (!src) return "";
+  // already absolute or data URL
+  if (/^(https?:\/\/|data:)/i.test(src)) return src;
+  // ensure a single leading slash
+  const path = src.startsWith("/") ? src : `/${src}`;
+  return `${API_ORIGIN}${path}`;
+}
 
 export default function ProfilePage() {
   const navigate = useNavigate();
-  const { user } = useAuth();   // ✅ logged-in user from global state
+  const { user } = useAuth(); // { username, profilePic, ... }
 
-  // ✅ Redirect to landing if not logged in
+  // Redirect to landing if not logged in (same as your current behavior)
   useEffect(() => {
-    if (!user) {
-      navigate("/", { replace: true });
-    }
+    if (!user) navigate("/", { replace: true });
   }, [user, navigate]);
 
-  if (!user) {
-    return null; // avoid flashing empty profile before redirect
-  }
+  if (!user) return null;
+
+  const avatar = resolveImage(user.profilePic) || "https://via.placeholder.com/120";
 
   return (
-    <div style={{ minHeight: "100vh", width: "100vw", background: "#000", color: "#ffe259", position: "relative" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100vw",
+        background: "#000",
+        color: "#ffe259",
+        position: "relative",
+      }}
+    >
       {/* BACKGROUND IMAGE */}
       <div
         style={{
@@ -31,7 +50,7 @@ export default function ProfilePage() {
       />
 
       <div style={{ position: "relative", zIndex: 1, padding: "2rem" }}>
-        {/* HEADER BOX (only avatar + username shown) */}
+        {/* HEADER: avatar + username */}
         <div
           style={{
             display: "flex",
@@ -42,40 +61,27 @@ export default function ProfilePage() {
             border: "1px solid #333",
             borderRadius: 8,
             background: "rgba(17,17,17,0.6)",
-            position: "relative",
             flexDirection: "column",
           }}
         >
-          {/* CENTER: Avatar + Username */}
           <img
-            src={user?.profilePic || "https://via.placeholder.com/120"}
+            src={avatar}
             alt="avatar"
+            crossOrigin="anonymous"
             style={{
               borderRadius: "50%",
               border: "3px solid #000",
               height: 120,
               width: 120,
+              objectFit: "cover",
               display: "block",
               marginBottom: "0.5rem",
             }}
           />
-          <h1 style={{ margin: "0" }}>{user?.username}</h1>
-
-          {/* 🚫 Temporarily hidden: Quote, buttons, highlights, edit */}
-          {false && (
-            <>
-              <div>Favorite Quote / Stats / Buttons</div>
-              <div>Highlights / Edit Profile</div>
-            </>
-          )}
+          <h1 style={{ margin: 0 }}>{user.username}</h1>
         </div>
 
-        {/* 🚫 Temporarily hidden: All other sections */}
-        {false && (
-          <div>
-            <div>Feed / Gallery / Activity / Interests / Friends</div>
-          </div>
-        )}
+        {/* (You can add more profile sections here later) */}
       </div>
     </div>
   );
