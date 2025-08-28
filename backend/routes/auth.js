@@ -10,7 +10,7 @@ const multer = require("multer");
 const User = require("../models/User");
 const { verifyToken } = require("../middleware/authMiddleware");
 
-// ---------- Multer (require an image named `profilePic`) ----------
+/* ---------- Multer: accept an image field named `profilePic` ---------- */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -22,11 +22,13 @@ const upload = multer({
   },
 });
 
+/* ---------- Helpers ---------- */
 function ensureUploadsDir() {
   const dir = path.join(__dirname, "..", "uploads");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
+
 function saveBufferToUploads(buffer, originalName) {
   const uploadDir = ensureUploadsDir();
   const ts = Date.now();
@@ -36,10 +38,24 @@ function saveBufferToUploads(buffer, originalName) {
   fs.writeFileSync(fullPath, buffer);
   return `/uploads/${filename}`;
 }
+
+function saveDataUrlToUploads(dataUrl, fallbackName = "image.png") {
+  // data:[mime];base64,AAAA...
+  const m = /^data:(.+?);base64,(.+)$/i.exec(dataUrl || "");
+  if (!m) throw new Error("Invalid image data URL");
+  const mime = m[1];
+  if (!/^image\//i.test(mime)) throw new Error("Only image data URLs are allowed");
+  const buf = Buffer.from(m[2], "base64");
+  const ext = mime.split("/")[1] || "png";
+  return saveBufferToUploads(buf, `profile.${ext}`);
+}
+
 function signJwt(payload) {
   const secret = process.env.JWT_SECRET || "dev-secret";
   return jwt.sign(payload, secret, { expiresIn: "7d" });
 }
+
+/* ---------- Routes ---------- */
 
 // POST /api/auth/signup
 router.post("/signup", upload.single("profilePic"), async (req, res) => {
@@ -57,7 +73,14 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
     if (!username || !email || !password || !firstName || !lastName || !birthday) {
       return res.status(400).json({ error: "Missing required fields" });
     }
-    if (!req.file) {
+
+    // Accept either multipart file or data URL string
+    let imagePath;
+    if (req.file) {
+      imagePath = saveBufferToUploads(req.file.buffer, req.file.originalname);
+    } else if (typeof req.body.profilePic === "string" && req.body.profilePic.startsWith("data:image")) {
+      imagePath = saveDataUrlToUploads(req.body.profilePic);
+    } else {
       return res.status(400).json({ error: "Profile image is required" });
     }
 
@@ -66,14 +89,12 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
     });
     if (existing) return res.status(409).json({ error: "User already exists" });
 
-    const imagePath = saveBufferToUploads(req.file.buffer, req.file.originalname);
-
     const birthDate = new Date(birthday);
     if (isNaN(birthDate.getTime())) {
       return res.status(400).json({ error: "Invalid birthday format" });
     }
 
-    // Let the model pre('save') hook hash the password
+    // Model hook hashes the password
     const user = await User.create({
       username: username.toLowerCase(),
       email: email.toLowerCase(),
@@ -81,9 +102,9 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
       firstName,
       lastName,
       birthday: birthDate,
-      referral: referral || "",
+      referral: (referral || "").trim(),
       interests,
-      profilePic: imagePath, // <-- match schema
+      profilePic: imagePath,
     });
 
     const token = signJwt({ id: user._id });
@@ -108,7 +129,8 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
       });
   } catch (err) {
     console.error("Signup error:", err);
-    res.status(500).json({ error: "Signup failed" });
+    // Surface the reason while we're debugging
+    res.status(500).json({ error: err.message || "Signup failed" });
   }
 });
 
