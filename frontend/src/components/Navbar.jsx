@@ -4,17 +4,16 @@ import { useNavigate } from "react-router-dom";
 import SearchBar from "./SearchBar";
 import { useAuth } from "../context/AuthContext"; // ✅ global auth
 
-// ---------- Avatar helpers ----------
+// ---------- Env helpers ----------
 function isLocalhost() {
   const h = window.location.hostname;
   return h === "localhost" || h === "127.0.0.1";
 }
-
 function apiHost() {
   return isLocalhost() ? "http://localhost:5000" : "https://api.netspacezone.com";
 }
 
-// Simple inline SVG fallback so we never show a broken image
+// ---------- Avatar fallback ----------
 const FALLBACK_AVATAR =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(
@@ -25,12 +24,12 @@ const FALLBACK_AVATAR =
     </svg>`
   );
 
-// Normalize any avatar string the API/frontend might hand us
-function resolveAvatar(raw) {
+// Normalize any avatar string the API/frontend might hand us, and add cache-busting param if provided
+function resolveAvatar(raw, ver) {
   let src = (raw || "").trim();
   if (!src) return FALLBACK_AVATAR;
 
-  // Pass through data/blob URLs
+  // Pass through data/blob URLs unchanged
   if (/^(data:|blob:)/i.test(src)) return src;
 
   const host = apiHost();
@@ -40,9 +39,11 @@ function resolveAvatar(raw) {
     try {
       const u = new URL(src);
       if (/api\.netspacezone\.com$/i.test(u.hostname) && u.pathname.startsWith("/uploads/")) {
-        return (isLocalhost() ? "http://localhost:5000" : "https://api.netspacezone.com") + u.pathname;
+        u.protocol = isLocalhost() ? "http:" : "https:";
+        u.host = isLocalhost() ? "localhost:5000" : "api.netspacezone.com";
       }
-      return src; // some other absolute URL (e.g., CDN) — leave as-is
+      if (ver) u.searchParams.set("v", ver);
+      return u.toString();
     } catch {
       // fall through to relative logic
     }
@@ -50,14 +51,19 @@ function resolveAvatar(raw) {
 
   // Relative path; ensure it points at /uploads/*
   src = src.replace(/^\.?\/*/, ""); // strip leading ./ or /
-  if (!src.startsWith("uploads/")) src = `uploads/${src}`;
-  return `${host}/${src}`;
+  if (!src.startsWith("uploads/") && !src.startsWith("uploads\\")) src = `uploads/${src}`;
+  const u = new URL(`${host}/${src}`);
+  if (ver) u.searchParams.set("v", ver);
+  return u.toString();
 }
 
 export default function Navbar({ unreadCount }) {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
 
+  // Keep a local copy so we can react to cross-tree events/broadcasts
+  const [currentUser, setCurrentUser] = useState(user);
+  const [avatarVersion, setAvatarVersion] = useState(() => localStorage.getItem("nsz:avatar:v") || "");
   const [menuOpen, setMenuOpen] = useState(false);
   const [showAllPopup, setShowAllPopup] = useState(false);
 
@@ -65,6 +71,51 @@ export default function Navbar({ unreadCount }) {
   const bellRef = useRef(null);
 
   const GOLD = "#facc15";
+
+  // Sync with AuthContext updates
+  useEffect(() => {
+    setCurrentUser(user);
+  }, [user]);
+
+  // Listen for SettingsPage broadcasts: same-tab CustomEvent + cross-tab BroadcastChannel
+  useEffect(() => {
+    const onUserUpdated = (e) => {
+      if (e?.detail) {
+        setCurrentUser(e.detail);
+        // if avatar was changed, SettingsPage set a version token in localStorage
+        const v = localStorage.getItem("nsz:avatar:v") || String(Date.now());
+        setAvatarVersion(v);
+      }
+    };
+    window.addEventListener("nsz:user-updated", onUserUpdated);
+
+    // BroadcastChannel for other trees/microfrontends/tabs
+    let bc = null;
+    if ("BroadcastChannel" in window) {
+      bc = new BroadcastChannel("nsz_auth");
+      bc.addEventListener("message", (evt) => {
+        if (evt?.data?.type === "user-updated" && evt.data.user) {
+          setCurrentUser(evt.data.user);
+          const v = localStorage.getItem("nsz:avatar:v") || String(Date.now());
+          setAvatarVersion(v);
+        }
+      });
+    }
+
+    // Also listen to storage changes (fires in other tabs)
+    const onStorage = (e) => {
+      if (e.key === "nsz:avatar:v") {
+        setAvatarVersion(e.newValue || "");
+      }
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener("nsz:user-updated", onUserUpdated);
+      window.removeEventListener("storage", onStorage);
+      bc?.close?.();
+    };
+  }, []);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -80,8 +131,8 @@ export default function Navbar({ unreadCount }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const rawPic = (user?.profilePic || user?.profileImage || "").trim();
-  const avatarSrc = resolveAvatar(rawPic);
+  const rawPic = (currentUser?.profilePic || currentUser?.profileImage || "").trim();
+  const avatarSrc = resolveAvatar(rawPic, avatarVersion);
 
   return (
     <div
@@ -176,7 +227,7 @@ export default function Navbar({ unreadCount }) {
           src={avatarSrc}
           alt="Profile"
           crossOrigin="anonymous"
-          onClick={() => user?.username && navigate(`/profile/${user.username}`)}
+          onClick={() => currentUser?.username && navigate(`/profile/${currentUser.username}`)}
           onError={(e) => {
             if (!e.currentTarget.dataset.fallback) {
               e.currentTarget.dataset.fallback = "1";
@@ -189,7 +240,7 @@ export default function Navbar({ unreadCount }) {
             borderRadius: "50%",
             objectFit: "cover",
             border: `2px solid ${GOLD}`,
-            cursor: user?.username ? "pointer" : "default",
+            cursor: currentUser?.username ? "pointer" : "default",
           }}
         />
         <div
@@ -200,7 +251,7 @@ export default function Navbar({ unreadCount }) {
             marginTop: 3,
           }}
         >
-          {user?.username || "Guest"}
+          {currentUser?.username || "Guest"}
         </div>
       </div>
 
