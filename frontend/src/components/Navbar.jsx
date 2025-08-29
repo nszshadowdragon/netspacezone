@@ -1,10 +1,8 @@
-// frontend/src/components/Navbar.jsx
 import React, { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import SearchBar from "./SearchBar";
-import { useAuth } from "../context/AuthContext"; // ✅ global auth
+import { useAuth } from "../context/AuthContext";
 
-// ---------- Env helpers ----------
 function isLocalhost() {
   const h = window.location.hostname;
   return h === "localhost" || h === "127.0.0.1";
@@ -13,7 +11,6 @@ function apiHost() {
   return isLocalhost() ? "http://localhost:5000" : "https://api.netspacezone.com";
 }
 
-// ---------- Avatar fallback ----------
 const FALLBACK_AVATAR =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(
@@ -24,17 +21,13 @@ const FALLBACK_AVATAR =
     </svg>`
   );
 
-// Normalize any avatar string the API/frontend might hand us, and add cache-busting param if provided
 function resolveAvatar(raw, ver) {
   let src = (raw || "").trim();
   if (!src) return FALLBACK_AVATAR;
-
-  // Pass through data/blob URLs unchanged
   if (/^(data:|blob:)/i.test(src)) return src;
 
   const host = apiHost();
 
-  // Absolute URL? In dev, rewrite api.netspacezone.com/uploads/* -> localhost:5000/uploads/*
   if (/^https?:\/\//i.test(src)) {
     try {
       const u = new URL(src);
@@ -45,12 +38,11 @@ function resolveAvatar(raw, ver) {
       if (ver) u.searchParams.set("v", ver);
       return u.toString();
     } catch {
-      // fall through to relative logic
+      /* fall through */
     }
   }
 
-  // Relative path; ensure it points at /uploads/*
-  src = src.replace(/^\.?\/*/, ""); // strip leading ./ or /
+  src = src.replace(/^\.?\/*/, "");
   if (!src.startsWith("uploads/") && !src.startsWith("uploads\\")) src = `uploads/${src}`;
   const u = new URL(`${host}/${src}`);
   if (ver) u.searchParams.set("v", ver);
@@ -59,9 +51,9 @@ function resolveAvatar(raw, ver) {
 
 export default function Navbar({ unreadCount }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, logout } = useAuth();
 
-  // Keep a local copy so we can react to cross-tree events/broadcasts
   const [currentUser, setCurrentUser] = useState(user);
   const [avatarVersion, setAvatarVersion] = useState(() => localStorage.getItem("nsz:avatar:v") || "");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -72,24 +64,18 @@ export default function Navbar({ unreadCount }) {
 
   const GOLD = "#facc15";
 
-  // Sync with AuthContext updates
-  useEffect(() => {
-    setCurrentUser(user);
-  }, [user]);
+  useEffect(() => setCurrentUser(user), [user]);
 
-  // Listen for SettingsPage broadcasts: same-tab CustomEvent + cross-tab BroadcastChannel
   useEffect(() => {
     const onUserUpdated = (e) => {
       if (e?.detail) {
         setCurrentUser(e.detail);
-        // if avatar was changed, SettingsPage set a version token in localStorage
         const v = localStorage.getItem("nsz:avatar:v") || String(Date.now());
         setAvatarVersion(v);
       }
     };
     window.addEventListener("nsz:user-updated", onUserUpdated);
 
-    // BroadcastChannel for other trees/microfrontends/tabs
     let bc = null;
     if ("BroadcastChannel" in window) {
       bc = new BroadcastChannel("nsz_auth");
@@ -102,11 +88,8 @@ export default function Navbar({ unreadCount }) {
       });
     }
 
-    // Also listen to storage changes (fires in other tabs)
     const onStorage = (e) => {
-      if (e.key === "nsz:avatar:v") {
-        setAvatarVersion(e.newValue || "");
-      }
+      if (e.key === "nsz:avatar:v") setAvatarVersion(e.newValue || "");
     };
     window.addEventListener("storage", onStorage);
 
@@ -117,7 +100,6 @@ export default function Navbar({ unreadCount }) {
     };
   }, []);
 
-  // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (menuRef.current && !menuRef.current.contains(event.target) && !event.target.closest("#menuBtn")) {
@@ -134,6 +116,33 @@ export default function Navbar({ unreadCount }) {
   const rawPic = (currentUser?.profilePic || currentUser?.profileImage || "").trim();
   const avatarSrc = resolveAvatar(rawPic, avatarVersion);
 
+  const pathname = location.pathname || "/";
+  const isOn = (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+
+  const menuPages = [
+    { key: "spacehub", label: "SpaceHub", to: "/spacehub", isCurrent: () => isOn("/spacehub") || pathname === "/" },
+    {
+      key: "profile",
+      label: "Profile",
+      to: currentUser?.username ? `/profile/${currentUser.username}` : "/profile",
+      isCurrent: () => isOn("/profile"),
+      hide: !currentUser?.username,
+    },
+    { key: "settings", label: "Settings", to: "/settings", isCurrent: () => isOn("/settings") },
+    { key: "store", label: "Store", to: "/store", isCurrent: () => isOn("/store") },
+    { key: "events", label: "Events", to: "/events", isCurrent: () => isOn("/events") },
+    { key: "blog", label: "Blog", to: "/blog", isCurrent: () => isOn("/blog") },
+    { key: "podcast", label: "Podcast", to: "/podcast", isCurrent: () => isOn("/podcast") },
+    { key: "creatorshub", label: "CreatorsHub", to: "/creatorshub", isCurrent: () => isOn("/creatorshub") || isOn("/creators") },
+  ];
+
+  const visibleMenuPages = menuPages.filter((p) => !p.hide && !p.isCurrent());
+
+  // Compute a width that’s just a bit wider than the longest label currently shown
+  const labelsForWidth = [...visibleMenuPages.map((p) => p.label), "Logout"];
+  const maxChars = Math.max(...labelsForWidth.map((s) => (s || "").length), 8); // floor
+  const dropdownWidth = `calc(${maxChars}ch + 48px)`; // add padding/spacing
+
   return (
     <div
       style={{
@@ -149,15 +158,12 @@ export default function Navbar({ unreadCount }) {
         padding: "0 24px",
       }}
     >
-      {/* Logo */}
       <img src="/assets/nsz-logo2.png" alt="NSZ Logo" style={{ height: 182 }} />
 
-      {/* Search */}
       <div style={{ minWidth: 280, maxWidth: 480, width: "100%" }}>
         <SearchBar />
       </div>
 
-      {/* Notification Bell */}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div style={{ position: "relative" }} ref={bellRef}>
           <button
@@ -210,18 +216,13 @@ export default function Navbar({ unreadCount }) {
                 color: "#fff",
               }}
             >
-              <h4 style={{ marginBottom: 8 }}>Notifications</h4>
-              {unreadCount > 0 ? (
-                <p>You have {unreadCount} new notification(s).</p>
-              ) : (
-                <p>No new notifications</p>
-              )}
+              <h4 style={{ marginBottom: 8, textAlign: "center" }}>Notifications</h4>
+              {unreadCount > 0 ? <p>You have {unreadCount} new notification(s).</p> : <p>No new notifications</p>}
             </div>
           )}
         </div>
       </div>
 
-      {/* User Info */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
         <img
           src={avatarSrc}
@@ -243,30 +244,17 @@ export default function Navbar({ unreadCount }) {
             cursor: currentUser?.username ? "pointer" : "default",
           }}
         />
-        <div
-          style={{
-            color: GOLD,
-            fontWeight: 700,
-            fontSize: "1rem",
-            marginTop: 3,
-          }}
-        >
+        <div style={{ color: GOLD, fontWeight: 700, fontSize: "1rem", marginTop: 3 }}>
           {currentUser?.username || "Guest"}
         </div>
       </div>
 
-      {/* Menu (hamburger) */}
+      {/* Hamburger + Dropdown */}
       <div ref={menuRef}>
         <button
           id="menuBtn"
           onClick={() => setMenuOpen((p) => !p)}
-          style={{
-            background: "none",
-            border: "none",
-            color: GOLD,
-            fontSize: "2rem",
-            cursor: "pointer",
-          }}
+          style={{ background: "none", border: "none", color: GOLD, fontSize: "2rem", cursor: "pointer" }}
         >
           ☰
         </button>
@@ -280,40 +268,58 @@ export default function Navbar({ unreadCount }) {
               background: "#000",
               border: `1.5px solid ${GOLD}`,
               borderRadius: 12,
-              padding: "10px 0",
+              padding: "10px 8px",
               zIndex: 1001,
-              width: 220,
+              width: dropdownWidth, // auto-sized to longest label
             }}
           >
-            {/* Settings (in dropdown) */}
-            <div
-              onClick={() => {
-                navigate("/settings");
-                setMenuOpen(false);
-              }}
-              style={{
-                padding: "12px 18px",
-                cursor: "pointer",
-                borderBottom: `1px solid ${GOLD}`,
-                color: GOLD,
-                fontWeight: 700,
-              }}
-            >
-              ⚙️ Settings
-            </div>
+            {/* Items */}
+            {visibleMenuPages.map((item) => (
+              <div
+                key={item.key}
+                onClick={() => {
+                  navigate(item.to);
+                  setMenuOpen(false);
+                }}
+                style={{
+                  margin: "6px 6px",
+                  padding: "12px 16px",
+                  border: `1px solid ${GOLD}`,
+                  borderRadius: 10,
+                  color: GOLD,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  textAlign: "center",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  userSelect: "none",
+                }}
+              >
+                {item.label}
+              </div>
+            ))}
 
-            {/* Logout */}
+            {/* Logout — same border & centering for uniformity */}
             <div
               onClick={() => {
                 logout();
                 setMenuOpen(false);
-                navigate("/", { replace: true });
+                navigate("/spacehub", { replace: true });
               }}
               style={{
-                padding: "12px 18px",
+                margin: "6px 6px",
+                padding: "12px 16px",
+                border: `1px solid ${GOLD}`,
+                borderRadius: 10,
                 color: "#ff4444",
-                fontWeight: "bold",
+                fontWeight: 800,
                 cursor: "pointer",
+                textAlign: "center",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                userSelect: "none",
               }}
             >
               Logout
@@ -324,13 +330,3 @@ export default function Navbar({ unreadCount }) {
     </div>
   );
 }
-
-const actionBtn = {
-  border: "1px solid #333",
-  background: "rgba(255,226,89,0.2)",
-  color: "#ffe259",
-  padding: "0.4rem 0.8rem",
-  borderRadius: 6,
-  cursor: "pointer",
-  fontWeight: "bold",
-};
