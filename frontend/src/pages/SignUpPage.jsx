@@ -2,7 +2,17 @@
 import React, { useRef, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
-const API_BASE = "https://api.netspacezone.com";
+// Runtime-aware API base: local dev → http://localhost:5000, prod → https://api.netspacezone.com
+function apiBase() {
+  try {
+    const h = window.location.hostname;
+    const isLocal = h === "localhost" || h === "127.0.0.1" || h === "::1";
+    return isLocal ? "http://localhost:5000" : "https://api.netspacezone.com";
+  } catch {
+    return "https://api.netspacezone.com";
+  }
+}
+const API_BASE = apiBase();
 const SIGNUP_URL = `${API_BASE}/api/auth/signup`;
 const ME_URL = `${API_BASE}/api/auth/me`;
 
