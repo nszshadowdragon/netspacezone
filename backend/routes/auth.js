@@ -10,17 +10,15 @@ const multer = require("multer");
 const User = require("../models/User");
 const { verifyToken } = require("../middleware/authMiddleware");
 
-// ---------- Multer (require an image named `profilePic`) ----------
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // allow up to 10MB now
-  fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Only image files are allowed"));
-    }
-    cb(null, true);
-  },
-});
+/* ---------------------------- helpers & utils ---------------------------- */
+const escapeRegExp = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const isValidEmail = (v = "") => /^\S+@\S+\.\S+$/.test(String(v).trim());
+const isValidUsername = (v = "") => /^[a-zA-Z0-9._-]{3,20}$/.test(String(v).trim());
+
+function signJwt(payload) {
+  const secret = process.env.JWT_SECRET || "dev-secret";
+  return jwt.sign(payload, secret, { expiresIn: "7d" });
+}
 
 function ensureUploadsDir() {
   const dir = path.join(__dirname, "..", "uploads");
@@ -36,10 +34,20 @@ function saveBufferToUploads(buffer, originalName) {
   fs.writeFileSync(fullPath, buffer);
   return `/uploads/${filename}`;
 }
-function signJwt(payload) {
-  const secret = process.env.JWT_SECRET || "dev-secret";
-  return jwt.sign(payload, secret, { expiresIn: "7d" });
-}
+
+/* ----------------------------- multer config ---------------------------- */
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // up to 10MB
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith("image/")) {
+      return cb(new Error("Only image files are allowed"));
+    }
+    cb(null, true);
+  },
+});
+
+/* --------------------------------- AUTH --------------------------------- */
 
 // POST /api/auth/signup
 router.post("/signup", upload.single("profilePic"), async (req, res) => {
@@ -51,7 +59,7 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
     if (Array.isArray(req.body.interests)) {
       interests = req.body.interests;
     } else if (typeof req.body.interests === "string") {
-      interests = req.body.interests.split(",").map(s => s.trim()).filter(Boolean);
+      interests = req.body.interests.split(",").map((s) => s.trim()).filter(Boolean);
     }
 
     if (!username || !email || !password || !firstName || !lastName || !birthday) {
@@ -61,8 +69,11 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
       return res.status(400).json({ error: "Profile image is required" });
     }
 
+    const usernameLower = String(username).trim().toLowerCase();
+    const emailLower = String(email).trim().toLowerCase();
+
     const existing = await User.findOne({
-      $or: [{ email: email.toLowerCase() }, { username: username.toLowerCase() }],
+      $or: [{ email: emailLower }, { username: usernameLower }],
     });
     if (existing) return res.status(409).json({ error: "User already exists" });
 
@@ -75,15 +86,15 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
 
     // Let the model pre('save') hook hash the password
     const user = await User.create({
-      username: username.toLowerCase(),
-      email: email.toLowerCase(),
+      username: usernameLower, // store lower-case for consistency in this app
+      email: emailLower,
       password,
       firstName,
       lastName,
       birthday: birthDate,
       referral: referral || "",
       interests,
-      profilePic: imagePath, // <-- match schema
+      profilePic: imagePath,
     });
 
     const token = signJwt({ id: user._id });
@@ -120,8 +131,10 @@ router.post("/login", async (req, res) => {
     const { identifier, password } = req.body;
     if (!identifier || !password) return res.status(400).json({ error: "Missing credentials" });
 
+    const identLower = String(identifier).trim().toLowerCase();
+
     const user = await User.findOne({
-      $or: [{ email: identifier.toLowerCase() }, { username: identifier.toLowerCase() }],
+      $or: [{ email: identLower }, { username: identLower }],
     });
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
@@ -178,7 +191,31 @@ router.post("/logout", (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
-/* NEW: Update profile (names, birthday, referral, interests, avatar) */
+/*   CHECK USERNAME AVAILABILITY (case-insensitive exact match)       */
+/*   GET /api/auth/check-username?username=<string> -> {available}    */
+/* ------------------------------------------------------------------ */
+router.get("/check-username", async (req, res) => {
+  try {
+    const raw = String(req.query.username || "").trim();
+    if (!raw || !isValidUsername(raw)) {
+      return res.status(200).json({ available: false, reason: "invalid" });
+    }
+
+    // Case-insensitive exact match on "username"
+    const exists = await User.exists({
+      username: new RegExp("^" + escapeRegExp(raw) + "$", "i"),
+    });
+
+    return res.json({ available: !exists });
+  } catch (e) {
+    console.error("check-username error:", e);
+    return res.status(500).json({ available: false });
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Update profile (names, birthday, referral, interests, avatar,      */
+/*                and now ALSO username & email w/ validation)        */
 /* ------------------------------------------------------------------ */
 // PATCH /api/auth/profile
 router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, res) => {
@@ -186,28 +223,62 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
     const user = await User.findById(req.userId);
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    const allowed = ["firstName", "lastName", "referral"];
-    for (const k of allowed) {
-      if (req.body[k] !== undefined) {
-        user[k] = String(req.body[k]).trim();
+    const payload = req.body || {};
+
+    // ---- Optional: username change
+    if (payload.username !== undefined) {
+      const desired = String(payload.username).trim();
+      if (!isValidUsername(desired)) {
+        return res.status(400).json({ error: "Invalid username format" });
+      }
+      const desiredLower = desired.toLowerCase();
+      const same = desiredLower === String(user.username || "").toLowerCase();
+      if (!same) {
+        const taken = await User.exists({
+          username: new RegExp("^" + escapeRegExp(desired) + "$", "i"),
+        });
+        if (taken) return res.status(409).json({ error: "Username already taken" });
+        user.username = desiredLower; // stored lowercase in this app
       }
     }
 
-    if (req.body.birthday !== undefined) {
-      const d = new Date(req.body.birthday);
-      if (!isNaN(d.getTime())) user.birthday = d;
-      else return res.status(400).json({ error: "Invalid birthday format" });
+    // ---- Optional: email change
+    if (payload.email !== undefined) {
+      const newEmail = String(payload.email).trim();
+      if (!isValidEmail(newEmail)) {
+        return res.status(400).json({ error: "Invalid email address" });
+      }
+      const newLower = newEmail.toLowerCase();
+      const same = newLower === String(user.email || "").toLowerCase();
+      if (!same) {
+        const exists = await User.exists({ email: newLower });
+        if (exists) return res.status(409).json({ error: "Email already in use" });
+        user.email = newLower;
+      }
     }
 
-    // interests can be "a,b,c" or array
-    if (req.body.interests !== undefined) {
+    // ---- Names / referral
+    if (payload.firstName !== undefined) user.firstName = String(payload.firstName).trim();
+    if (payload.lastName !== undefined) user.lastName = String(payload.lastName).trim();
+    if (payload.referral !== undefined) user.referral = String(payload.referral).trim();
+
+    // ---- Birthday (UI keeps read-only; still validate if present)
+    if (payload.birthday !== undefined) {
+      const d = new Date(payload.birthday);
+      if (isNaN(d.getTime())) return res.status(400).json({ error: "Invalid birthday format" });
+      user.birthday = d;
+    }
+
+    // ---- Interests
+    if (payload.interests !== undefined) {
       let interests = [];
-      if (Array.isArray(req.body.interests)) interests = req.body.interests;
-      else if (typeof req.body.interests === "string")
-        interests = req.body.interests.split(",").map(s => s.trim()).filter(Boolean);
+      if (Array.isArray(payload.interests)) interests = payload.interests;
+      else if (typeof payload.interests === "string")
+        interests = payload.interests.split(",").map((s) => s.trim()).filter(Boolean);
       user.interests = interests;
     }
 
+    // ---- Profile image
     if (req.file) {
       const imagePath = saveBufferToUploads(req.file.buffer, req.file.originalname);
       user.profilePic = imagePath;
@@ -236,7 +307,7 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
 });
 
 /* -------------------------------------- */
-/* NEW: Change password (secure, verified)*/
+/* Change password (secure, verified)     */
 /* -------------------------------------- */
 // PATCH /api/auth/password
 router.patch("/password", verifyToken, async (req, res) => {
