@@ -4,10 +4,11 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import "./index.css";
 
-import App from "./App"; // global wrapper with Navbar
+import App from "./App";                       // global wrapper with Navbar
 import Landing from "./pages/LandingPage.jsx";
 import Signup from "./pages/SignUpPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
+import SettingsPage from "./pages/SettingsPage.jsx";  // ✅ use the real page
 import { AuthProvider } from "./context/AuthContext";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
@@ -23,7 +24,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
           <Route element={<App />}>
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/profile/:username" element={<ProfilePage />} />
-            {/* Add more routes with Navbar here */}
+            <Route path="/settings" element={<SettingsPage />} /> {/* ✅ fixed */}
           </Route>
         </Routes>
       </BrowserRouter>
