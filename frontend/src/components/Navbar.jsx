@@ -2,14 +2,56 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import SearchBar from "./SearchBar";
-import { useAuth } from "../context/AuthContext";   // ✅ global auth
+import { useAuth } from "../context/AuthContext"; // ✅ global auth
 
-const API_ORIGIN = "https://api.netspacezone.com";
-function resolveAvatar(src) {
-  if (!src) return "";
-  if (/^(data:|https?:\/\/)/i.test(src)) return src; // data URL or absolute
-  const path = src.startsWith("/") ? src : `/${src}`;
-  return `${API_ORIGIN}${path}`; // /uploads/... -> API host
+// ---------- Avatar helpers ----------
+function isLocalhost() {
+  const h = window.location.hostname;
+  return h === "localhost" || h === "127.0.0.1";
+}
+
+function apiHost() {
+  return isLocalhost() ? "http://localhost:5000" : "https://api.netspacezone.com";
+}
+
+// Simple inline SVG fallback so we never show a broken image
+const FALLBACK_AVATAR =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72">
+      <rect width="100%" height="100%" fill="#111"/>
+      <circle cx="36" cy="36" r="32" fill="#222" stroke="#333" stroke-width="4"/>
+      <text x="50%" y="54%" text-anchor="middle" fill="#ffe259" font-size="12" font-family="Arial">avatar</text>
+    </svg>`
+  );
+
+// Normalize any avatar string the API/frontend might hand us
+function resolveAvatar(raw) {
+  let src = (raw || "").trim();
+  if (!src) return FALLBACK_AVATAR;
+
+  // Pass through data/blob URLs
+  if (/^(data:|blob:)/i.test(src)) return src;
+
+  const host = apiHost();
+
+  // Absolute URL? In dev, rewrite api.netspacezone.com/uploads/* -> localhost:5000/uploads/*
+  if (/^https?:\/\//i.test(src)) {
+    try {
+      const u = new URL(src);
+      if (/api\.netspacezone\.com$/i.test(u.hostname) && u.pathname.startsWith("/uploads/")) {
+        return (isLocalhost() ? "http://localhost:5000" : "https://api.netspacezone.com") + u.pathname;
+      }
+      return src; // some other absolute URL (e.g., CDN) — leave as-is
+    } catch {
+      // fall through to relative logic
+    }
+  }
+
+  // Relative path; ensure it points at /uploads/*
+  src = src.replace(/^\.?\/*/, ""); // strip leading ./ or /
+  if (!src.startsWith("uploads/")) src = `uploads/${src}`;
+  return `${host}/${src}`;
 }
 
 export default function Navbar({ unreadCount }) {
@@ -38,20 +80,8 @@ export default function Navbar({ unreadCount }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const navPages = [
-    { name: "Home", path: "/home" },
-    { name: "Profile", path: `/profile/${user?.username}` },
-    { name: "Settings", path: "/settings" },
-    { name: "Store", path: "/store" },
-    { name: "SpaceHub", path: "/spacehub" },
-    { name: "Events", path: "/events" },
-    { name: "Blog", path: "/blog" },
-    { name: "Podcast", path: "/podcast" },
-    { name: "CreatorsHub", path: "/creatorshub" },
-  ];
-
   const rawPic = (user?.profilePic || user?.profileImage || "").trim();
-  const avatarSrc = rawPic ? resolveAvatar(rawPic) : "/assets/default-avatar.png";
+  const avatarSrc = resolveAvatar(rawPic);
 
   return (
     <div
@@ -147,6 +177,12 @@ export default function Navbar({ unreadCount }) {
           alt="Profile"
           crossOrigin="anonymous"
           onClick={() => user?.username && navigate(`/profile/${user.username}`)}
+          onError={(e) => {
+            if (!e.currentTarget.dataset.fallback) {
+              e.currentTarget.dataset.fallback = "1";
+              e.currentTarget.src = FALLBACK_AVATAR;
+            }
+          }}
           style={{
             width: 48,
             height: 48,
@@ -168,7 +204,7 @@ export default function Navbar({ unreadCount }) {
         </div>
       </div>
 
-      {/* Menu */}
+      {/* Menu (hamburger) */}
       <div ref={menuRef}>
         <button
           id="menuBtn"
@@ -198,27 +234,24 @@ export default function Navbar({ unreadCount }) {
               width: 220,
             }}
           >
-            {/* 🚫 TEMPORARILY HIDE ALL NAVIGATION LINKS */}
-            {false &&
-              navPages.map((page) => (
-                <div
-                  key={page.path}
-                  onClick={() => {
-                    navigate(page.path);
-                    setMenuOpen(false);
-                  }}
-                  style={{
-                    padding: "12px 18px",
-                    cursor: "pointer",
-                    borderBottom: `1px solid ${GOLD}`,
-                    color: GOLD,
-                  }}
-                >
-                  {page.name}
-                </div>
-              ))}
+            {/* Settings (in dropdown) */}
+            <div
+              onClick={() => {
+                navigate("/settings");
+                setMenuOpen(false);
+              }}
+              style={{
+                padding: "12px 18px",
+                cursor: "pointer",
+                borderBottom: `1px solid ${GOLD}`,
+                color: GOLD,
+                fontWeight: 700,
+              }}
+            >
+              ⚙️ Settings
+            </div>
 
-            {/* ✅ Keep Logout available */}
+            {/* Logout */}
             <div
               onClick={() => {
                 logout();
