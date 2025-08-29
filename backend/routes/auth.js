@@ -10,6 +10,12 @@ const multer = require("multer");
 const User = require("../models/User");
 const { verifyToken } = require("../middleware/authMiddleware");
 
+/* ---------------------------- env & paths ---------------------------- */
+const UPLOAD_DIR =
+  process.env.UPLOAD_DIR && process.env.UPLOAD_DIR.trim().length > 0
+    ? process.env.UPLOAD_DIR
+    : path.join(process.cwd(), "uploads"); // fallback for dev
+
 /* ---------------------------- helpers & utils ---------------------------- */
 const escapeRegExp = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const isValidEmail = (v = "") => /^\S+@\S+\.\S+$/.test(String(v).trim());
@@ -21,24 +27,25 @@ function signJwt(payload) {
 }
 
 function ensureUploadsDir() {
-  const dir = path.join(__dirname, "..", "uploads");
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  return UPLOAD_DIR;
 }
+
+// Save a buffer to UPLOAD_DIR and return the public path beginning with /uploads/…
 function saveBufferToUploads(buffer, originalName) {
-  const uploadDir = ensureUploadsDir();
+  const dir = ensureUploadsDir();
   const ts = Date.now();
   const sanitized = (originalName || "image").replace(/[^\w.\-]+/g, "_");
   const filename = `${ts}_${sanitized}`;
-  const fullPath = path.join(uploadDir, filename);
+  const fullPath = path.join(dir, filename);
   fs.writeFileSync(fullPath, buffer);
   return `/uploads/${filename}`;
 }
 
 /* ----------------------------- multer config ---------------------------- */
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // up to 10MB
+  storage: multer.memoryStorage(), // buffer for our own write (disk or cloud)
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.startsWith("image/")) {
       return cb(new Error("Only image files are allowed"));
@@ -94,7 +101,7 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
       birthday: birthDate,
       referral: referral || "",
       interests,
-      profilePic: imagePath,
+      profilePic: imagePath, // => "/uploads/xxxx.png"
     });
 
     const token = signJwt({ id: user._id });
@@ -215,7 +222,7 @@ router.get("/check-username", async (req, res) => {
 
 /* ------------------------------------------------------------------ */
 /* Update profile (names, birthday, referral, interests, avatar,      */
-/*                and now ALSO username & email w/ validation)        */
+/*                and also username & email with validation)          */
 /* ------------------------------------------------------------------ */
 // PATCH /api/auth/profile
 router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, res) => {
@@ -238,7 +245,7 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
           username: new RegExp("^" + escapeRegExp(desired) + "$", "i"),
         });
         if (taken) return res.status(409).json({ error: "Username already taken" });
-        user.username = desiredLower; // stored lowercase in this app
+        user.username = desiredLower; // store lowercase for consistency
       }
     }
 
@@ -281,7 +288,7 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
     // ---- Profile image
     if (req.file) {
       const imagePath = saveBufferToUploads(req.file.buffer, req.file.originalname);
-      user.profilePic = imagePath;
+      user.profilePic = imagePath; // => "/uploads/xxxx.png"
     }
 
     await user.save();
