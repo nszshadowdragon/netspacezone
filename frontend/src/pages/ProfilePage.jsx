@@ -42,11 +42,7 @@ function resolveAvatar(raw) {
   if (/^https?:\/\//i.test(src)) {
     try {
       const u = new URL(src);
-      // Only rewrite if it's our API host and it's an /uploads/* path
-      if (
-        /api\.netspacezone\.com$/i.test(u.hostname) &&
-        u.pathname.startsWith("/uploads/")
-      ) {
+      if (/api\.netspacezone\.com$/i.test(u.hostname) && u.pathname.startsWith("/uploads/")) {
         return (local ? "http://localhost:5000" : "https://api.netspacezone.com") + u.pathname;
       }
       return src; // leave any other absolute URLs untouched
@@ -126,16 +122,8 @@ export default function ProfilePage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        width: "100vw",
-        background: "#000",
-        color: "#ffe259",
-        position: "relative",
-      }}
-    >
-      {/* BACKGROUND IMAGE */}
+    <div className="profile-page" style={{ position: "relative" }}>
+      {/* decorative background */}
       <div
         style={{
           position: "absolute",
@@ -143,56 +131,84 @@ export default function ProfilePage() {
           background: "url('/assets/nsz-logo.png') center/cover no-repeat",
           opacity: 0.07,
           zIndex: 0,
+          pointerEvents: "none",
         }}
       />
 
-      <div style={{ position: "relative", zIndex: 1, padding: "2rem" }}>
-        {/* HEADER BOX */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            padding: "1.5rem",
-            marginBottom: "2rem",
-            border: "1px solid #333",
-            borderRadius: 8,
-            background: "rgba(17,17,17,0.6)",
-            position: "relative",
-          }}
-        >
+      {/* Responsive styles */}
+      <style>{`
+        .profile-page{
+          min-height:100vh; width:100vw; background:#000; color:#ffe259;
+        }
+        .pp-container{ position:relative; z-index:1; padding:2rem; max-width:1100px; margin:0 auto; }
+        @media (max-width: 680px){ .pp-container{ padding:1rem; } }
+
+        .pp-header{
+          display:flex; gap:1rem; justify-content:space-between; align-items:flex-start;
+          padding:1.25rem; margin-bottom:2rem; border:1px solid #333; border-radius:8px;
+          background:rgba(17,17,17,.6);
+        }
+        .pp-left{ flex:1; }
+        .pp-center{ flex:1; text-align:center; }
+        .pp-right{ flex:1; text-align:right; }
+        .pp-actions{ margin-top:.8rem; display:flex; gap:.5rem; flex-wrap:wrap; }
+        .pp-username{ margin:0; font-size:clamp(20px,3.2vw,28px); }
+        .pp-avatar{
+          height:clamp(96px,14vw,120px); width:clamp(96px,14vw,120px);
+          border-radius:50%; border:3px solid #000; object-fit:cover; display:block; margin:0 auto .5rem;
+        }
+
+        @media (max-width: 900px){
+          .pp-header{ flex-direction:column; align-items:center; text-align:center; }
+          .pp-right{ text-align:center; }
+          .pp-actions{ justify-content:center; }
+        }
+
+        .pp-main{ display:flex; gap:2rem; }
+        .pp-col-left{ flex:2; }
+        .pp-col-right{ flex:1; }
+        @media (max-width: 900px){ .pp-main{ flex-direction:column; } }
+
+        .section{
+          margin-bottom:2rem; padding:1rem; border-radius:8px; border:1px solid #333; background:rgba(17,17,17,.5);
+        }
+
+        .pp-friends{ display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; }
+        @media (max-width: 480px){ .pp-friends{ grid-template-columns:repeat(2,1fr); } }
+
+        .pp-btn{ border:none; padding:.45rem .85rem; border-radius:6px; cursor:pointer; font-weight:700; }
+        .pp-btn.gold{ background:#ffe259; color:#000; }
+        .pp-btn.action{ border:1px solid #333; background:rgba(255,226,89,.2); color:#ffe259; }
+        textarea.pp-input{
+          width:100%; padding:.5rem; border-radius:6px; background:transparent; border:1px solid #333; color:#ffe259;
+        }
+      `}</style>
+
+      <div className="pp-container">
+        {/* HEADER */}
+        <div className="pp-header">
           {/* LEFT: Favorite Quote */}
-          <div style={{ flex: 1 }}>
-            <h3 style={{ marginBottom: "0.5rem" }}>Favorite Quote</h3>
+          <div className="pp-left">
+            <h3 style={{ marginBottom: ".5rem" }}>Favorite Quote</h3>
             <p>“Where connection meets cosmos.”</p>
             <small style={{ display: "block", marginTop: "1rem" }}>
               123 Friends • 56 Posts • 900 Likes
             </small>
-            <div
-              style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}
-            >
-              <button style={actionBtn} onClick={() => setIsFriend(!isFriend)}>
+            <div className="pp-actions">
+              <button className="pp-btn action" onClick={() => setIsFriend(!isFriend)}>
                 {isFriend ? "Unfriend" : "Add"}
               </button>
-              <button style={actionBtn}>Message</button>
-              <button style={actionBtn}>Share</button>
+              <button className="pp-btn action">Message</button>
+              <button className="pp-btn action">Share</button>
             </div>
           </div>
 
           {/* CENTER: Avatar + Username */}
-          <div style={{ flex: 1, textAlign: "center" }}>
+          <div className="pp-center">
             <img
               src={avatar}
               alt="avatar"
-              style={{
-                borderRadius: "50%",
-                border: "3px solid #000",
-                height: 120,
-                width: 120,
-                display: "block",
-                margin: "0 auto 0.5rem",
-                objectFit: "cover",
-              }}
+              className="pp-avatar"
               onError={(e) => {
                 if (!e.currentTarget.dataset.fallback) {
                   e.currentTarget.dataset.fallback = "1";
@@ -200,28 +216,20 @@ export default function ProfilePage() {
                 }
               }}
             />
-            <h1 style={{ margin: "0" }}>@{displayUsername}</h1>
+            <h1 className="pp-username">@{displayUsername}</h1>
           </div>
 
           {/* RIGHT: Highlights + Edit */}
-          <div style={{ flex: 1, textAlign: "right" }}>
+          <div className="pp-right">
             <div style={{ marginBottom: "1rem" }}>
               <button
                 onClick={() => setEditMode((e) => !e)}
-                style={{
-                  background: "#ffe259",
-                  border: "none",
-                  color: "#000",
-                  padding: "0.4rem 0.8rem",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  fontWeight: "bold",
-                }}
+                className="pp-btn gold"
               >
                 {editMode ? "Close Editor" : "Edit Profile"}
               </button>
             </div>
-            <h3 style={{ marginBottom: "0.5rem" }}>Highlights</h3>
+            <h3 style={{ marginBottom: ".5rem" }}>Highlights</h3>
             <p>
               <strong>Featured In:</strong> Top Creators
             </p>
@@ -234,86 +242,58 @@ export default function ProfilePage() {
         {/* EDIT MODE PANEL */}
         {editMode && (
           <div
+            className="section"
             style={{
-              marginBottom: "2rem",
               background: "rgba(30,20,5,0.9)",
-              padding: "1.5rem",
-              borderRadius: 8,
               border: "1px solid #b8860b",
               boxShadow: "0 0 10px rgba(255,226,89,0.5)",
             }}
           >
-            <h2 style={{ marginTop: 0, color: "#ffe259" }}>
-              ⚡ Profile Customization
-            </h2>
+            <h2 style={{ marginTop: 0, color: "#ffe259" }}>⚡ Profile Customization</h2>
             <p style={{ marginBottom: "1rem", color: "#aaa" }}>
               Toggle sections and adjust your layout:
             </p>
             {Object.keys(sections).map((key) => (
-              <div key={key} style={{ marginBottom: "0.5rem" }}>
+              <div key={key} style={{ marginBottom: ".5rem" }}>
                 <label>
                   <input
                     type="checkbox"
                     checked={sections[key]}
                     onChange={() => toggleSection(key)}
-                    style={{ marginRight: "0.5rem" }}
+                    style={{ marginRight: ".5rem" }}
                   />
                   {key.charAt(0).toUpperCase() + key.slice(1)}
                 </label>
               </div>
             ))}
-            <button
-              style={{
-                marginTop: "1rem",
-                background: "#ffe259",
-                color: "#000",
-                border: "none",
-                padding: "0.5rem 1rem",
-                borderRadius: 6,
-                fontWeight: "bold",
-                cursor: "pointer",
-              }}
-            >
+            <button className="pp-btn gold" style={{ marginTop: "1rem" }}>
               Save Changes
             </button>
           </div>
         )}
 
         {/* MAIN LAYOUT */}
-        <div style={{ display: "flex", gap: "2rem" }}>
+        <div className="pp-main">
           {/* LEFT COLUMN */}
-          <div style={{ flex: 2 }}>
+          <div className="pp-col-left">
             {sections.feed && (
-              <div style={sectionBox}>
-                <textarea
-                  placeholder="What's on your mind?"
-                  style={{
-                    width: "100%",
-                    padding: "0.5rem",
-                    borderRadius: 6,
-                    background: "transparent",
-                    border: "1px solid #333",
-                    color: "#ffe259",
-                    marginBottom: "0.5rem",
-                  }}
-                />
-                <button style={{ ...btn, background: "#ffe259", color: "#000" }}>
+              <div className="section">
+                <textarea className="pp-input" placeholder="What's on your mind?" />
+                <button className="pp-btn gold" style={{ marginTop: ".5rem" }}>
                   Post
                 </button>
                 <div style={{ marginTop: "1rem" }}>
                   {["First post!", "Excited to join NSZ!"].map((post, i) => (
                     <div
                       key={i}
+                      className="section"
                       style={{
                         marginBottom: "1rem",
-                        padding: "0.8rem",
-                        border: "1px solid #333",
-                        borderRadius: 6,
                         background: "rgba(17,17,17,0.6)",
                       }}
                     >
                       <strong>@{displayUsername}</strong>
-                      <p style={{ margin: "0.3rem 0" }}>{post}</p>
+                      <p style={{ margin: ".3rem 0" }}>{post}</p>
                     </div>
                   ))}
                 </div>
@@ -321,7 +301,7 @@ export default function ProfilePage() {
             )}
 
             {sections.gallery && (
-              <div style={sectionBox}>
+              <div className="section">
                 <h2>Photos</h2>
                 <div
                   style={{
@@ -343,7 +323,6 @@ export default function ProfilePage() {
                         border: "1px solid #333",
                       }}
                       onError={(e) => {
-                        // local inline fallback
                         e.currentTarget.src =
                           "data:image/svg+xml;utf8," +
                           encodeURIComponent(
@@ -360,7 +339,7 @@ export default function ProfilePage() {
             )}
 
             {sections.activity && (
-              <div style={sectionBox}>
+              <div className="section">
                 <h2>Recent Activity</h2>
                 <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
                   <li>Friended User123</li>
@@ -371,7 +350,7 @@ export default function ProfilePage() {
             )}
 
             {sections.interests && (
-              <div style={sectionBox}>
+              <div className="section">
                 <h2>Interests</h2>
                 <div>
                   <span style={tag}>#Anime</span>
@@ -383,25 +362,16 @@ export default function ProfilePage() {
           </div>
 
           {/* RIGHT COLUMN */}
-          <div style={{ flex: 1 }}>
+          <div className="pp-col-right">
             {sections.friends && (
-              <div style={sectionBox}>
+              <div className="section">
                 <h2>Friends</h2>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(3, 1fr)",
-                    gap: "1rem",
-                  }}
-                >
+                <div className="pp-friends">
                   {Array.from({ length: 6 }).map((_, i) => (
                     <div key={i} style={{ textAlign: "center" }}>
                       <img
                         src="https://via.placeholder.com/80"
-                        style={{
-                          borderRadius: "50%",
-                          border: "1px solid #333",
-                        }}
+                        style={{ borderRadius: "50%", border: "1px solid #333" }}
                         alt="friend"
                         onError={(e) => {
                           e.currentTarget.src =
@@ -413,7 +383,7 @@ export default function ProfilePage() {
                             );
                         }}
                       />
-                      <p style={{ fontSize: "0.8rem" }}>Friend{i + 1}</p>
+                      <p style={{ fontSize: ".8rem" }}>Friend{i + 1}</p>
                     </div>
                   ))}
                 </div>
@@ -425,32 +395,6 @@ export default function ProfilePage() {
     </div>
   );
 }
-
-const sectionBox = {
-  marginBottom: "2rem",
-  padding: "1rem",
-  borderRadius: 8,
-  border: "1px solid #333",
-  background: "rgba(17,17,17,0.5)",
-};
-
-const btn = {
-  border: "none",
-  padding: "0.4rem 0.8rem",
-  borderRadius: 6,
-  cursor: "pointer",
-  fontWeight: "bold",
-};
-
-const actionBtn = {
-  border: "1px solid #333",
-  background: "rgba(255,226,89,0.2)",
-  color: "#ffe259",
-  padding: "0.4rem 0.8rem",
-  borderRadius: 6,
-  cursor: "pointer",
-  fontWeight: "bold",
-};
 
 const tag = {
   display: "inline-block",

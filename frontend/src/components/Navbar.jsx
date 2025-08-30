@@ -38,9 +38,7 @@ function resolveAvatar(raw, ver) {
       }
       if (ver) u.searchParams.set("v", ver);
       return u.toString();
-    } catch {
-      /* fall through */
-    }
+    } catch {}
   }
 
   src = src.replace(/^\.?\/*/, "");
@@ -51,7 +49,7 @@ function resolveAvatar(raw, ver) {
 }
 /* --------------------------------------------------- */
 
-export default function Navbar({ unreadCount }) {
+export default function Navbar({ unreadCount = 0 }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth() || {};
@@ -61,8 +59,12 @@ export default function Navbar({ unreadCount }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showAllPopup, setShowAllPopup] = useState(false);
 
-  const menuRef = useRef(null);
+  const dropdownRef = useRef(null);
   const bellRef = useRef(null);
+  const navRef = useRef(null);
+
+  const [navH, setNavH] = useState(92);
+  const [rightInset, setRightInset] = useState("0px");
 
   const GOLD = "#facc15";
 
@@ -102,17 +104,33 @@ export default function Navbar({ unreadCount }) {
     };
   }, []);
 
+  // close on outside click
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target) && !event.target.closest("#menuBtn")) {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target) && !e.target.closest("#menuBtn")) {
         setMenuOpen(false);
       }
-      if (bellRef.current && !bellRef.current.contains(event.target) && !event.target.closest("#bellBtn")) {
+      if (bellRef.current && !bellRef.current.contains(e.target) && !e.target.closest("#bellBtn")) {
         setShowAllPopup(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // measure navbar height + compute right inset (scrollbar width + safe area + extra gap)
+  useEffect(() => {
+    const RIGHT_GAP_PX = 24; // increase to move menu further left
+    const update = () => {
+      const h = navRef.current?.getBoundingClientRect()?.height;
+      setNavH(Math.max(60, Math.round(h || 92)));
+
+      const sb = Math.max(0, window.innerWidth - document.documentElement.clientWidth); // scrollbar width
+      setRightInset(`calc(${sb}px + env(safe-area-inset-right) + ${RIGHT_GAP_PX}px)`);
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
   }, []);
 
   const rawPic = (currentUser?.profilePic || currentUser?.profileImage || "").trim();
@@ -121,16 +139,10 @@ export default function Navbar({ unreadCount }) {
   const pathname = location.pathname || "/";
   const isOn = (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 
-  // Keep order; ensure Profile is ALWAYS visible in dropdown
+  // ordered list with SpaceHub first; hide CURRENT page (including Profile)
   const menuPages = [
     { key: "spacehub", label: "SpaceHub", to: "/spacehub", isCurrent: () => isOn("/spacehub") || pathname === "/" },
-    {
-      key: "profile",
-      label: "Profile",
-      to: currentUser?.username ? `/profile/${currentUser.username}` : "/profile",
-      isCurrent: () => isOn("/profile"),
-      hide: false,
-    },
+    { key: "profile", label: "Profile", to: currentUser?.username ? `/profile/${currentUser.username}` : "/profile", isCurrent: () => isOn("/profile") },
     { key: "settings", label: "Settings", to: "/settings", isCurrent: () => isOn("/settings") },
     { key: "store", label: "Store", to: "/store", isCurrent: () => isOn("/store") },
     { key: "events", label: "Events", to: "/events", isCurrent: () => isOn("/events") },
@@ -138,11 +150,9 @@ export default function Navbar({ unreadCount }) {
     { key: "podcast", label: "Podcast", to: "/podcast", isCurrent: () => isOn("/podcast") },
     { key: "creatorshub", label: "CreatorsHub", to: "/creatorshub", isCurrent: () => isOn("/creatorshub") || isOn("/creators") },
   ];
+  const visibleMenuPages = menuPages.filter((p) => !p.isCurrent());
 
-  // Hide current page EXCEPT keep Profile visible per your request
-  const visibleMenuPages = menuPages.filter((p) => !p.hide && (!p.isCurrent() || p.key === "profile"));
-
-  // width slightly larger than longest label
+  // width just bigger than the longest label
   const labelsForWidth = [...visibleMenuPages.map((p) => p.label), "Logout"];
   const maxChars = Math.max(...labelsForWidth.map((s) => (s || "").length), 8);
   const dropdownWidth = `calc(${maxChars}ch + 48px)`;
@@ -153,9 +163,7 @@ export default function Navbar({ unreadCount }) {
     e?.preventDefault?.();
     e?.stopPropagation?.();
     try {
-      if (typeof logout === "function") {
-        await Promise.resolve(logout());
-      }
+      if (typeof logout === "function") await Promise.resolve(logout());
       try {
         await fetch(`${apiHost()}/api/auth/logout`, {
           method: "POST",
@@ -163,9 +171,7 @@ export default function Navbar({ unreadCount }) {
           headers: { "Content-Type": "application/json" },
         });
       } catch {}
-      try {
-        localStorage.removeItem("token");
-      } catch {}
+      try { localStorage.removeItem("token"); } catch {}
       try {
         if ("BroadcastChannel" in window) {
           const bc = new BroadcastChannel("nsz_auth");
@@ -176,135 +182,138 @@ export default function Navbar({ unreadCount }) {
       } catch {}
     } finally {
       setMenuOpen(false);
-      // 👉 Route to Landing page when logged out
       navigate("/landing", { replace: true });
-      // If your state persists across tabs, you can force a clean slate:
-      // window.location.assign("/landing");
     }
   }, [logout, navigate]);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-evenly",
-        background: "#000",
-        borderBottom: `1.5px solid ${GOLD}`,
-        position: "sticky",
-        top: 0,
-        zIndex: 1000,
-        height: 92,
-        padding: "0 24px",
-      }}
-    >
-      {/* Logo */}
-      <img src="/assets/nsz-logo2.png" alt="NSZ Logo" style={{ height: 182 }} />
+    <>
+      {/* mobile tweaks */}
+      <style>{`
+        @media (max-width: 640px){
+          .nsz-nav { height: 72px !important; padding: 0 12px !important; }
+          .nsz-logo { height: 64px !important; }
+          .nsz-search { min-width: 0 !important; max-width: none !important; }
+        }
+      `}</style>
 
-      {/* Search */}
-      <div style={{ minWidth: 280, maxWidth: 480, width: "100%" }}>
-        <SearchBar />
-      </div>
-
-      {/* Notification Bell */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ position: "relative" }} ref={bellRef}>
-          <button
-            id="bellBtn"
-            onClick={() => setShowAllPopup((p) => !p)}
-            style={{
-              background: "none",
-              border: "2px solid " + GOLD,
-              borderRadius: "50%",
-              width: 36,
-              height: 36,
-              color: GOLD,
-              fontSize: "1.1rem",
-              cursor: "pointer",
-            }}
-          >
-            🔔
-          </button>
-          {unreadCount > 0 && (
-            <span
-              style={{
-                position: "absolute",
-                top: -4,
-                right: -4,
-                background: "#ef4444",
-                color: "#fff",
-                fontSize: 10,
-                padding: "0 5px",
-                borderRadius: 999,
-                lineHeight: "16px",
-                height: 18,
-              }}
-            >
-              {unreadCount}
-            </span>
-          )}
-
-          {showAllPopup && (
-            <div
-              style={{
-                position: "absolute",
-                top: 46,
-                right: 0,
-                background: "#111",
-                border: `1.5px solid ${GOLD}`,
-                borderRadius: 12,
-                padding: 16,
-                zIndex: 1002,
-                width: 260,
-                color: "#fff",
-              }}
-            >
-              <h4 style={{ marginBottom: 8, textAlign: "center" }}>Notifications</h4>
-              {unreadCount > 0 ? <p>You have {unreadCount} new notification(s).</p> : <p>No new notifications</p>}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Avatar + username link to profile */}
-      <Link
-        to={profilePath}
-        onClick={() => setMenuOpen(false)}
+      {/* NAV BAR */}
+      <div
+        ref={navRef}
+        className="nsz-nav"
         style={{
           display: "flex",
-          flexDirection: "column",
           alignItems: "center",
-          textDecoration: "none",
-          cursor: "pointer",
+          justifyContent: "space-evenly",
+          background: "#000",
+          borderBottom: `1.5px solid ${GOLD}`,
+          position: "sticky",
+          top: 0,
+          zIndex: 1000,
+          height: 92,
+          padding: "0 24px",
         }}
-        aria-label="Go to profile"
       >
-        <img
-          src={avatarSrc}
-          alt="Profile"
-          crossOrigin="anonymous"
-          draggable="false"
-          onError={(e) => {
-            if (!e.currentTarget.dataset.fallback) {
-              e.currentTarget.dataset.fallback = "1";
-              e.currentTarget.src = FALLBACK_AVATAR;
-            }
-          }}
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: "50%",
-            objectFit: "cover",
-            border: `2px solid ${GOLD}`,
-          }}
-        />
-        <div style={{ color: GOLD, fontWeight: 700, fontSize: "1rem", marginTop: 3 }}>
-          {currentUser?.username || "Guest"}
-        </div>
-      </Link>
+        {/* Logo */}
+        <img src="/assets/nsz-logo2.png" alt="NSZ Logo" className="nsz-logo" style={{ height: 182 }} />
 
-      {/* Hamburger + Dropdown */}
-      <div ref={menuRef}>
+        {/* Search */}
+        <div className="nsz-search" style={{ minWidth: 280, maxWidth: 480, width: "100%" }}>
+          <SearchBar />
+        </div>
+
+        {/* Notification Bell */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ position: "relative" }} ref={bellRef}>
+            <button
+              id="bellBtn"
+              onClick={() => setShowAllPopup((p) => !p)}
+              style={{
+                background: "none",
+                border: "2px solid " + GOLD,
+                borderRadius: "50%",
+                width: 36,
+                height: 36,
+                color: GOLD,
+                fontSize: "1.1rem",
+                cursor: "pointer",
+              }}
+            >
+              🔔
+            </button>
+            {unreadCount > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: -4,
+                  right: -4,
+                  background: "#ef4444",
+                  color: "#fff",
+                  fontSize: 10,
+                  padding: "0 5px",
+                  borderRadius: 999,
+                  lineHeight: "16px",
+                  height: 18,
+                }}
+              >
+                {unreadCount}
+              </span>
+            )}
+
+            {showAllPopup && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 46,
+                  right: 0,
+                  background: "#111",
+                  border: `1.5px solid ${GOLD}`,
+                  borderRadius: 12,
+                  padding: 16,
+                  zIndex: 1002,
+                  width: 260,
+                  color: "#fff",
+                }}
+              >
+                <h4 style={{ marginBottom: 8, textAlign: "center" }}>Notifications</h4>
+                {unreadCount > 0 ? <p>You have {unreadCount} new notification(s).</p> : <p>No new notifications</p>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Avatar + username -> Profile */}
+        <Link
+          to={profilePath}
+          onClick={() => setMenuOpen(false)}
+          style={{ display: "flex", flexDirection: "column", alignItems: "center", textDecoration: "none" }}
+          aria-label="Go to profile"
+        >
+          <img
+            src={avatarSrc}
+            alt="Profile"
+            crossOrigin="anonymous"
+            draggable="false"
+            onError={(e) => {
+              if (!e.currentTarget.dataset.fallback) {
+                e.currentTarget.dataset.fallback = "1";
+                e.currentTarget.src = FALLBACK_AVATAR;
+              }
+            }}
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: "50%",
+              objectFit: "cover",
+              border: `2px solid ${GOLD}`,
+            }}
+          />
+          <div style={{ color: GOLD, fontWeight: 700, fontSize: "1rem", marginTop: 3 }}>
+            {currentUser?.username || "Guest"}
+          </div>
+        </Link>
+
+        {/* Burger button */}
         <button
           id="menuBtn"
           onClick={() => setMenuOpen((p) => !p)}
@@ -312,72 +321,75 @@ export default function Navbar({ unreadCount }) {
         >
           ☰
         </button>
+      </div>
 
-        {menuOpen && (
-          <div
-            style={{
-              position: "absolute",
-              top: 92,
-              right: 20,
-              background: "#000",
-              border: `1.5px solid ${GOLD}`,
-              borderRadius: 12,
-              padding: "10px 8px",
-              zIndex: 1001,
-              width: dropdownWidth,
-            }}
-          >
-            {visibleMenuPages.map((item) => (
-              <div
-                key={item.key}
-                onClick={() => {
-                  navigate(item.to);
-                  setMenuOpen(false);
-                }}
-                style={{
-                  margin: "6px 6px",
-                  padding: "12px 16px",
-                  border: `1px solid ${GOLD}`,
-                  borderRadius: 10,
-                  color: GOLD,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  textAlign: "center",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  userSelect: "none",
-                }}
-              >
-                {item.label}
-              </div>
-            ))}
-
-            {/* Logout -> Landing */}
-            <button
-              onClick={handleLogout}
+      {/* FIXED RIGHT-EDGE DROPDOWN — offset so it doesn't cover the scrollbar */}
+      {menuOpen && (
+        <div
+          ref={dropdownRef}
+          style={{
+            position: "fixed",
+            top: navH,                       // directly under the bar
+            right: rightInset,               // keep inside content edge (gap from scrollbar)
+            background: "#000",
+            border: `1.5px solid ${GOLD}`,
+            borderRadius: "12px 0 0 12px",
+            padding: "10px 8px",
+            zIndex: 2000,
+            width: dropdownWidth,
+            minWidth: 220,
+            boxShadow: "0 8px 24px rgba(0,0,0,.5)",
+          }}
+        >
+          {visibleMenuPages.map((item) => (
+            <div
+              key={item.key}
+              onClick={() => {
+                navigate(item.to);
+                setMenuOpen(false);
+              }}
               style={{
                 margin: "6px 6px",
                 padding: "12px 16px",
                 border: `1px solid ${GOLD}`,
                 borderRadius: 10,
-                background: "transparent",
-                color: "#ff4444",
-                fontWeight: 800,
+                color: GOLD,
+                fontWeight: 700,
                 cursor: "pointer",
                 textAlign: "center",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: "calc(100% - 12px)",
+                userSelect: "none",
               }}
-              aria-label="Log out"
             >
-              Logout
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
+              {item.label}
+            </div>
+          ))}
+
+          <button
+            onClick={handleLogout}
+            style={{
+              margin: "6px 6px",
+              padding: "12px 16px",
+              border: `1px solid ${GOLD}`,
+              borderRadius: 10,
+              background: "transparent",
+              color: "#ff4444",
+              fontWeight: 800,
+              cursor: "pointer",
+              textAlign: "center",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "calc(100% - 12px)",
+            }}
+            aria-label="Log out"
+          >
+            Logout
+          </button>
+        </div>
+      )}
+    </>
   );
 }
