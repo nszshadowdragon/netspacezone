@@ -1,3 +1,4 @@
+// frontend/src/components/Navbar.jsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import SearchBar from "./SearchBar";
@@ -120,12 +121,12 @@ export default function Navbar({ unreadCount = 0 }) {
 
   // measure navbar height + compute right inset (scrollbar width + safe area + extra gap)
   useEffect(() => {
-    const RIGHT_GAP_PX = 24; // increase to move menu further left
+    const RIGHT_GAP_PX = 24;
     const update = () => {
       const h = navRef.current?.getBoundingClientRect()?.height;
       setNavH(Math.max(60, Math.round(h || 92)));
 
-      const sb = Math.max(0, window.innerWidth - document.documentElement.clientWidth); // scrollbar width
+      const sb = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
       setRightInset(`calc(${sb}px + env(safe-area-inset-right) + ${RIGHT_GAP_PX}px)`);
     };
     update();
@@ -136,12 +137,8 @@ export default function Navbar({ unreadCount = 0 }) {
   const rawPic = (currentUser?.profilePic || currentUser?.profileImage || "").trim();
   const avatarSrc = resolveAvatar(rawPic, avatarVersion);
 
-  const pathname = location.pathname || "/";
-  the: // eslint pacifier
-  void pathname;
   const isOn = (prefix) => location.pathname === prefix || location.pathname.startsWith(`${prefix}/`);
 
-  // ordered list with SpaceHub first; hide CURRENT page (including Profile)
   const menuPages = [
     { key: "spacehub", label: "SpaceHub", to: "/spacehub", isCurrent: () => isOn("/spacehub") || location.pathname === "/" },
     { key: "profile", label: "Profile", to: currentUser?.username ? `/profile/${currentUser.username}` : "/profile", isCurrent: () => isOn("/profile") },
@@ -154,7 +151,6 @@ export default function Navbar({ unreadCount = 0 }) {
   ];
   const visibleMenuPages = menuPages.filter((p) => !p.isCurrent());
 
-  // width just bigger than the longest label
   const labelsForWidth = [...visibleMenuPages.map((p) => p.label), "Logout"];
   const maxChars = Math.max(...labelsForWidth.map((s) => (s || "").length), 8);
   const dropdownWidth = `calc(${maxChars}ch + 48px)`;
@@ -190,42 +186,64 @@ export default function Navbar({ unreadCount = 0 }) {
 
   return (
     <>
-      {/* Small-screen ONLY tweaks (desktop/laptop stays as-is) */}
+      {/* Mobile-only adjustments; desktop/laptop stays exactly as laid out below */}
       <style>{`
-        /* <= 900px: hide username, tighten spacing a bit */
+        /* Hide username on smaller screens */
         @media (max-width: 900px){
           .nsz-username { display: none !important; }
         }
 
-        /* <= 768px: allow wrap so the search can drop to row 2 and expand full-width */
+        /* Phone layout: center rows, stretch search, space-evenly icons */
         @media (max-width: 768px){
-          .nsz-nav { 
+          .nsz-bar { 
             flex-wrap: wrap !important; 
-            justify-content: space-between !important;
-            row-gap: 8px !important;
+            justify-content: center !important;
+            row-gap: 10px !important;
+            padding: 10px 12px !important;
             height: auto !important;
-            padding: 8px 12px !important;
           }
-          .nsz-logo { height: 64px !important; }
-          .nsz-search { min-width: 0 !important; max-width: none !important; width: 100% !important; }
-          #bellBtn { width: 30px !important; height: 30px !important; font-size: .95rem !important; }
-          .nsz-avatar { width: 36px !important; height: 36px !important; border-width: 1.5px !important; }
+          .nsz-logo { 
+            order: 1; 
+            height: 56px !important; 
+            margin: 0 auto !important; 
+            display: block !important;
+          }
+          .nsz-search { 
+            order: 2; 
+            width: min(92vw, 640px) !important; 
+            margin: 0 auto !important; 
+          }
+          .nsz-actions { 
+            order: 3; 
+            width: 100% !important; 
+            display: flex !important; 
+            justify-content: space-evenly !important; 
+            align-items: center !important;
+            gap: 18px !important;
+          }
+          #bellBtn { width: 34px !important; height: 34px !important; font-size: .95rem !important; }
+          .nsz-avatar { width: 40px !important; height: 40px !important; border-width: 1.5px !important; }
+          #menuBtn { font-size: 1.8rem !important; }
+        }
+
+        /* Extra-small tweaks */
+        @media (max-width: 420px){
+          .nsz-logo { height: 52px !important; }
+          #bellBtn { width: 30px !important; height: 30px !important; }
+          .nsz-avatar { width: 36px !important; height: 36px !important; }
           #menuBtn { font-size: 1.6rem !important; }
         }
 
-        /* <= 420px: shave a little more */
-        @media (max-width: 420px){
-          .nsz-logo { height: 56px !important; }
-          #bellBtn { width: 28px !important; height: 28px !important; font-size: .9rem !important; }
-          .nsz-avatar { width: 32px !important; height: 32px !important; }
-          #menuBtn { font-size: 1.4rem !important; }
+        /* Desktop: keep your laptop sizing; center the whole bar items evenly */
+        @media (min-width: 901px){
+          .nsz-search { min-width: 280px; max-width: 480px; }
         }
       `}</style>
 
-      {/* NAV BAR (desktop/laptop baseline preserved) */}
+      {/* DESKTOP/LAPTOP BASELINE (unchanged) */}
       <div
         ref={navRef}
-        className="nsz-nav"
+        className="nsz-bar"
         style={{
           display: "flex",
           alignItems: "center",
@@ -239,16 +257,16 @@ export default function Navbar({ unreadCount = 0 }) {
           padding: "0 24px",
         }}
       >
-        {/* Logo */}
+        {/* Logo (kept as-is) */}
         <img src="/assets/nsz-logo2.png" alt="NSZ Logo" className="nsz-logo" style={{ height: 182 }} />
 
-        {/* Search */}
-        <div className="nsz-search" style={{ minWidth: 280, maxWidth: 480, width: "100%" }}>
+        {/* Search (width rules are now in CSS so mobile can stretch) */}
+        <div className="nsz-search" style={{ width: "100%" }}>
           <SearchBar />
         </div>
 
-        {/* Notification Bell */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {/* Bell */}
+        <div className="nsz-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ position: "relative" }} ref={bellRef}>
             <button
               id="bellBtn"
@@ -284,7 +302,6 @@ export default function Navbar({ unreadCount = 0 }) {
                 {unreadCount}
               </span>
             )}
-
             {showAllPopup && (
               <div
                 style={{
@@ -305,58 +322,58 @@ export default function Navbar({ unreadCount = 0 }) {
               </div>
             )}
           </div>
+
+          {/* Avatar + username */}
+          <Link
+            to={currentUser?.username ? `/profile/${currentUser.username}` : "/profile"}
+            onClick={() => setMenuOpen(false)}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", textDecoration: "none" }}
+            aria-label="Go to profile"
+          >
+            <img
+              src={resolveAvatar(currentUser?.profilePic || currentUser?.profileImage, avatarVersion)}
+              alt="Profile"
+              crossOrigin="anonymous"
+              draggable="false"
+              className="nsz-avatar"
+              onError={(e) => {
+                if (!e.currentTarget.dataset.fallback) {
+                  e.currentTarget.dataset.fallback = "1";
+                  e.currentTarget.src = FALLBACK_AVATAR;
+                }
+              }}
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: "50%",
+                objectFit: "cover",
+                border: `2px solid ${GOLD}`,
+              }}
+            />
+            <div className="nsz-username" style={{ color: GOLD, fontWeight: 700, fontSize: "1rem", marginTop: 3 }}>
+              {currentUser?.username || "Guest"}
+            </div>
+          </Link>
+
+          {/* Burger */}
+          <button
+            id="menuBtn"
+            onClick={() => setMenuOpen((p) => !p)}
+            style={{ background: "none", border: "none", color: GOLD, fontSize: "2rem", cursor: "pointer" }}
+          >
+            ☰
+          </button>
         </div>
-
-        {/* Avatar + username -> Profile */}
-        <Link
-          to={profilePath}
-          onClick={() => setMenuOpen(false)}
-          style={{ display: "flex", flexDirection: "column", alignItems: "center", textDecoration: "none" }}
-          aria-label="Go to profile"
-        >
-          <img
-            src={avatarSrc}
-            alt="Profile"
-            crossOrigin="anonymous"
-            draggable="false"
-            className="nsz-avatar"
-            onError={(e) => {
-              if (!e.currentTarget.dataset.fallback) {
-                e.currentTarget.dataset.fallback = "1";
-                e.currentTarget.src = FALLBACK_AVATAR;
-              }
-            }}
-            style={{
-              width: 48,
-              height: 48,
-              borderRadius: "50%",
-              objectFit: "cover",
-              border: `2px solid ${GOLD}`,
-            }}
-          />
-          <div className="nsz-username" style={{ color: GOLD, fontWeight: 700, fontSize: "1rem", marginTop: 3 }}>
-            {currentUser?.username || "Guest"}
-          </div>
-        </Link>
-
-        {/* Burger button */}
-        <button
-          id="menuBtn"
-          onClick={() => setMenuOpen((p) => !p)}
-          style={{ background: "none", border: "none", color: GOLD, fontSize: "2rem", cursor: "pointer" }}
-        >
-          ☰
-        </button>
       </div>
 
-      {/* FIXED RIGHT-EDGE DROPDOWN — offset so it doesn't cover the scrollbar */}
+      {/* RIGHT-EDGE DROPDOWN — stays inside content area, below bar */}
       {menuOpen && (
         <div
           ref={dropdownRef}
           style={{
             position: "fixed",
-            top: navH,                       // directly under the bar
-            right: rightInset,               // keep inside content edge (gap from scrollbar)
+            top: navH,
+            right: rightInset,
             background: "#000",
             border: `1.5px solid ${GOLD}`,
             borderRadius: "12px 0 0 12px",
