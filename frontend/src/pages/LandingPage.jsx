@@ -1,49 +1,142 @@
 // frontend/src/pages/LandingPage.jsx
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-// API base (dev/prod)
 const API_BASE =
   import.meta.env.MODE === "production"
     ? "https://api.netspacezone.com"
     : (import.meta.env.VITE_API_BASE || "http://localhost:5000");
 
+const CSS = `
+:root{
+  --bg:#000; --card:#0d0d0d; --text:#eee; --muted:#bdbdbd; --gold:#facc15; --cyan:#00f5ff;
+}
+html,body{ background:var(--bg); color:var(--text); }
+*{ box-sizing:border-box; }
+
+.wrap{
+  min-height:100vh; min-height:100dvh;
+  display:grid; place-items:center;
+  padding:clamp(16px,4vw,32px);
+  padding-bottom:max(16px, env(safe-area-inset-bottom));
+  overflow-x:hidden;
+}
+.shell{
+  width:100%;
+  max-width:1000px;
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  background:#101010;
+  border-radius:16px;
+  overflow:hidden;
+  box-shadow:0 0 24px rgba(250,204,21,.25);
+}
+
+.left{
+  padding:clamp(20px,4vw,48px);
+  background:
+    radial-gradient(900px 450px at 15% -10%, rgba(0,255,255,.12), transparent 60%),
+    radial-gradient(700px 350px at 110% 10%, rgba(74,0,224,.15), transparent 60%),
+    linear-gradient(180deg,#000 0%,#111 100%);
+  display:grid; align-content:center; gap:clamp(10px,2vw,16px);
+  text-align:center;
+}
+.logo{
+  width: clamp(140px, 42vw, 220px);
+  margin:0 auto 6px;
+  display:block;
+  filter: drop-shadow(0 0 24px rgba(0,255,255,.5)) drop-shadow(0 2px 16px rgba(74,0,224,.45));
+  transform: rotate(-6deg);
+}
+.title{ margin:0; font-weight:800; color:var(--gold); font-size:clamp(24px,4.5vw,36px); }
+.subtitle{ margin:0; color:#cfcfcf; font-size:clamp(15px,2.5vw,20px); }
+
+.right{ padding:clamp(20px,4vw,40px); background:var(--bg); }
+.card{
+  width:100%; max-width:560px; margin:0 auto;
+  background:transparent;
+}
+h2{ margin:0 0 12px; color:var(--gold); font-size:clamp(18px,4.2vw,26px); font-weight:800; }
+
+.form{ display:grid; gap:12px; }
+label{ color:var(--muted); font-size:.95rem; }
+
+.input{
+  width:100%;
+  padding:14px 14px;
+  background:var(--card);
+  color:var(--text);
+  border:1px solid #2c2c2c;
+  border-radius:12px;
+  outline:none;
+  font-size:16px; /* stop iOS zoom */
+  line-height:1.2;
+}
+.input:focus-visible{
+  border-color:var(--gold);
+  box-shadow:0 0 0 3px rgba(250,204,21,.25);
+}
+
+.pw{ position:relative; }
+.show{
+  position:absolute; right:10px; top:50%; transform:translateY(-50%);
+  background:none; border:none; color:var(--cyan);
+  font-weight:800; cursor:pointer; padding:4px 6px; font-size:.95rem;
+}
+
+.row{ display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:6px; }
+.link{ background:none; border:none; color:var(--cyan); cursor:pointer; padding:0; font-size:.95rem; }
+
+.btn{
+  width:100%; min-height:48px; border:none; border-radius:12px;
+  font-weight:800; cursor:pointer; font-size:1rem; margin-top:8px;
+}
+.btn-gold{ background:var(--gold); color:#111; }
+.btn-cyan{ background:var(--cyan); color:#111; }
+.divider{ margin:clamp(14px,3vw,24px) 0; border-top:1px solid #2c2c2c; border-bottom:0; }
+
+.err{ color:#f87171; font-weight:700; }
+
+@media (max-width: 860px){
+  .shell{ grid-template-columns:1fr; }
+  .left{ order:1; padding:28px 20px; }
+  .right{ order:2; padding:22px 16px; }
+}
+`;
+
 export default function LandingPage() {
   const navigate = useNavigate();
   const { user } = useAuth() || {};
 
-  const [identifier, setIdentifier] = useState(""); // username OR email
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [showPw, setShowPw] = useState(false);
   const [remember, setRemember] = useState(false);
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
 
-  // Already signed in? go in-app
   useEffect(() => {
     if (user?.username) navigate("/spacehub", { replace: true });
   }, [user?.username, navigate]);
 
-  const handleLogin = async (e) => {
+  async function onSubmit(e) {
     e.preventDefault();
-    setError("");
+    setErr("");
 
     const id = identifier.trim();
-    const pw = password;
-    if (!id || !pw) {
-      setError("Username/email and password are required");
+    if (!id || !password) {
+      setErr("Username/email and password are required.");
       return;
     }
 
     setLoading(true);
     try {
-      // Backend expects: { identifier, password }
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier: id, password: pw, remember }),
+        body: JSON.stringify({ identifier: id, password, remember }),
       });
 
       if (!res.ok) {
@@ -55,135 +148,103 @@ export default function LandingPage() {
         throw new Error(msg);
       }
 
-      // Get username from response (various shapes supported)
-      let data = {};
-      try { data = await res.json(); } catch {}
+      const data = await res.json().catch(() => ({}));
       const u = data?.user || data || {};
       const uname = u.username || u.handle || u.name;
-
-      // Hard navigation so the cookie session is picked up immediately
-      if (uname) {
-        window.location.assign(`/profile/${encodeURIComponent(uname)}`);
-      } else {
-        window.location.assign("/spacehub");
-      }
-    } catch (err) {
-      setError(err?.message || "Login failed");
+      window.location.assign(uname ? `/profile/${encodeURIComponent(uname)}` : "/spacehub");
+    } catch (error) {
+      setErr(error?.message || "Login failed.");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
     <>
-      <style>{`
-        :root { --gold: #facc15; }
-        .landing-wrap {
-          min-height: 100vh; width: 100%; background: #000; color: var(--gold);
-          display: grid; place-items: center; padding: clamp(16px, 4vw, 48px); overflow-x: hidden;
-        }
-        .landing-shell { display: grid; grid-template-columns: 1fr 1fr; width: 100%; max-width: 1100px;
-          background: #111; border-radius: 16px; box-shadow: 0 0 24px rgba(250,204,21,.35); overflow: hidden; }
-        .landing-left, .landing-right { padding: clamp(20px, 4vw, 48px); }
-        .landing-left {
-          background: radial-gradient(1200px 600px at 10% -10%, rgba(0,255,255,.12), transparent 60%),
-                      radial-gradient(800px 400px at 110% 10%, rgba(74,0,224,.15), transparent 60%),
-                      linear-gradient(180deg,#000 0%, #111 100%);
-          display: grid; align-content: center; text-align: center; gap: clamp(10px, 2vw, 16px);
-        }
-        .landing-logo { width: clamp(140px, 30vw, 220px); height: auto; margin: 0 auto; display: block; object-fit: contain;
-                        filter: drop-shadow(0 0 36px rgba(0,255,255,.5)) drop-shadow(0 2px 20px rgba(74,0,224,.53));
-                        transform: rotate(-6deg); }
-        .landing-title { font-size: clamp(24px, 4vw, 36px); font-weight: 800; color: var(--gold); margin: 0; }
-        .landing-subtitle { font-size: clamp(16px, 2.5vw, 20px); color: #ccc; margin: 0; }
-        .landing-right { background: #000; display: grid; gap: clamp(12px, 2.5vw, 20px); }
-        .landing-form { display: grid; gap: 10px; margin-top: 8px; }
-        .landing-input { width: 100%; padding: 12px 14px; background: #0d0d0d; color: #eee; border: 1px solid #333; border-radius: 10px; outline: none; }
-        .landing-input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(250,204,21,.2); }
-        .pw-wrap { position: relative; }
-        .show-btn { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #0ff; cursor: pointer; font-weight: 700; padding: 0 4px; }
-        .landing-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
-        .login-btn, .signup-btn { margin-top: 16px; padding: clamp(10px, 3vw, 14px); width: 100%; font-weight: 800; border: none; border-radius: 10px; cursor: pointer; font-size: clamp(14px, 2.8vw, 16px); }
-        .login-btn { background: var(--gold); color: #111; }
-        .signup-btn { background: #0ff; color: #111; }
-        .divider { margin: clamp(16px, 3vw, 28px) 0; border: 0; border-top: 1px solid #333; }
-        @media (max-width: 980px) { .landing-shell { grid-template-columns: 1fr; } .landing-left { order: 1; } .landing-right { order: 2; } }
-        @media (max-width: 520px) { .landing-shell { border-radius: 12px; box-shadow: 0 0 16px rgba(250,204,21,.25); } .landing-row { justify-content: flex-start; } }
-      `}</style>
-
-      <div className="landing-wrap">
-        <div className="landing-shell">
-          <div className="landing-left">
-            <img src="/assets/nsz-logo.png" alt="NetSpace Zone" className="landing-logo" />
-            <h1 className="landing-title">NetSpace Zone</h1>
-            <p className="landing-subtitle">Where connection meets cosmos</p>
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <div className="wrap">
+        <div className="shell">
+          {/* Left / hero */}
+          <div className="left">
+            <img className="logo" src="/assets/nsz-logo.png" alt="NetSpace Zone" />
+            <h1 className="title">NetSpace Zone</h1>
+            <p className="subtitle">Where connection meets cosmos</p>
           </div>
 
-          <div className="landing-right">
-            <h2 style={{ fontSize: "clamp(18px, 3.8vw, 26px)", margin: 0 }}>Login to your account</h2>
+          {/* Right / auth card */}
+          <div className="right">
+            <div className="card">
+              <h2>Login to your account</h2>
 
-            <form className="landing-form" onSubmit={handleLogin}>
-              <label>Username or Email</label>
-              <input
-                type="text"
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                placeholder="Enter your username or email"
-                className="landing-input"
-                autoComplete="username"
-                inputMode="email"
-              />
-
-              <label style={{ marginTop: 12 }}>Password</label>
-              <div className="pw-wrap">
+              <form className="form" onSubmit={onSubmit}>
+                <label htmlFor="id">Username or Email</label>
                 <input
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  className="landing-input"
-                  autoComplete="current-password"
+                  id="id"
+                  className="input"
+                  type="text"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  placeholder="Enter your username or email"
+                  autoComplete="username"
+                  inputMode="email"
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="show-btn"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? "Hide" : "Show"}
-                </button>
-              </div>
 
-              <div className="landing-row">
-                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <label htmlFor="pw" style={{ marginTop: 6 }}>Password</label>
+                <div className="pw">
                   <input
-                    type="checkbox"
-                    checked={remember}
-                    onChange={(e) => setRemember(e.target.checked)}
+                    id="pw"
+                    className="input"
+                    type={showPw ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter your password"
+                    autoComplete="current-password"
                   />
-                  Remember me
-                </label>
+                  <button
+                    type="button"
+                    className="show"
+                    onClick={() => setShowPw((v) => !v)}
+                    aria-label={showPw ? "Hide password" : "Show password"}
+                  >
+                    {showPw ? "Hide" : "Show"}
+                  </button>
+                </div>
+
+                <div className="row">
+                  <label style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <input
+                      type="checkbox"
+                      checked={remember}
+                      onChange={(e)=>setRemember(e.target.checked)}
+                    />
+                    Remember me
+                  </label>
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => navigate("/forgot-password")}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+
+                {err && <div className="err">{err}</div>}
+
+                <button type="submit" className="btn btn-gold" disabled={loading}>
+                  {loading ? "Logging in..." : "Login"}
+                </button>
+
+                <hr className="divider" />
+
                 <button
                   type="button"
-                  onClick={() => navigate("/forgot-password")}
-                  style={{ background: "none", border: "none", color: "#0ff", cursor: "pointer", padding: 0, fontSize: "0.95rem" }}
+                  className="btn btn-cyan"
+                  onClick={() => navigate("/signup")}
                 >
-                  Forgot password?
+                  Sign Up
                 </button>
-              </div>
-
-              {error && <div style={{ color: "#f87171", marginTop: 8, fontWeight: 600 }}>{error}</div>}
-
-              <button type="submit" className="login-btn" disabled={loading}>
-                {loading ? "Logging in..." : "Login"}
-              </button>
-
-              <hr className="divider" />
-
-              <button type="button" onClick={() => navigate("/signup")} className="signup-btn">
-                Sign Up
-              </button>
-            </form>
+              </form>
+            </div>
           </div>
         </div>
       </div>
