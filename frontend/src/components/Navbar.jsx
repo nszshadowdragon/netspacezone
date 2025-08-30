@@ -137,11 +137,13 @@ export default function Navbar({ unreadCount = 0 }) {
   const avatarSrc = resolveAvatar(rawPic, avatarVersion);
 
   const pathname = location.pathname || "/";
-  const isOn = (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+  the: // eslint pacifier
+  void pathname;
+  const isOn = (prefix) => location.pathname === prefix || location.pathname.startsWith(`${prefix}/`);
 
   // ordered list with SpaceHub first; hide CURRENT page (including Profile)
   const menuPages = [
-    { key: "spacehub", label: "SpaceHub", to: "/spacehub", isCurrent: () => isOn("/spacehub") || pathname === "/" },
+    { key: "spacehub", label: "SpaceHub", to: "/spacehub", isCurrent: () => isOn("/spacehub") || location.pathname === "/" },
     { key: "profile", label: "Profile", to: currentUser?.username ? `/profile/${currentUser.username}` : "/profile", isCurrent: () => isOn("/profile") },
     { key: "settings", label: "Settings", to: "/settings", isCurrent: () => isOn("/settings") },
     { key: "store", label: "Store", to: "/store", isCurrent: () => isOn("/store") },
@@ -188,16 +190,39 @@ export default function Navbar({ unreadCount = 0 }) {
 
   return (
     <>
-      {/* mobile tweaks */}
+      {/* Small-screen ONLY tweaks (desktop/laptop stays as-is) */}
       <style>{`
-        @media (max-width: 640px){
-          .nsz-nav { height: 72px !important; padding: 0 12px !important; }
+        /* <= 900px: hide username, tighten spacing a bit */
+        @media (max-width: 900px){
+          .nsz-username { display: none !important; }
+        }
+
+        /* <= 768px: allow wrap so the search can drop to row 2 and expand full-width */
+        @media (max-width: 768px){
+          .nsz-nav { 
+            flex-wrap: wrap !important; 
+            justify-content: space-between !important;
+            row-gap: 8px !important;
+            height: auto !important;
+            padding: 8px 12px !important;
+          }
           .nsz-logo { height: 64px !important; }
-          .nsz-search { min-width: 0 !important; max-width: none !important; }
+          .nsz-search { min-width: 0 !important; max-width: none !important; width: 100% !important; }
+          #bellBtn { width: 30px !important; height: 30px !important; font-size: .95rem !important; }
+          .nsz-avatar { width: 36px !important; height: 36px !important; border-width: 1.5px !important; }
+          #menuBtn { font-size: 1.6rem !important; }
+        }
+
+        /* <= 420px: shave a little more */
+        @media (max-width: 420px){
+          .nsz-logo { height: 56px !important; }
+          #bellBtn { width: 28px !important; height: 28px !important; font-size: .9rem !important; }
+          .nsz-avatar { width: 32px !important; height: 32px !important; }
+          #menuBtn { font-size: 1.4rem !important; }
         }
       `}</style>
 
-      {/* NAV BAR */}
+      {/* NAV BAR (desktop/laptop baseline preserved) */}
       <div
         ref={navRef}
         className="nsz-nav"
@@ -294,6 +319,7 @@ export default function Navbar({ unreadCount = 0 }) {
             alt="Profile"
             crossOrigin="anonymous"
             draggable="false"
+            className="nsz-avatar"
             onError={(e) => {
               if (!e.currentTarget.dataset.fallback) {
                 e.currentTarget.dataset.fallback = "1";
@@ -308,7 +334,7 @@ export default function Navbar({ unreadCount = 0 }) {
               border: `2px solid ${GOLD}`,
             }}
           />
-          <div style={{ color: GOLD, fontWeight: 700, fontSize: "1rem", marginTop: 3 }}>
+          <div className="nsz-username" style={{ color: GOLD, fontWeight: 700, fontSize: "1rem", marginTop: 3 }}>
             {currentUser?.username || "Guest"}
           </div>
         </Link>
