@@ -1,4 +1,3 @@
-// frontend/src/components/Navbar.jsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import SearchBar from "./SearchBar";
@@ -186,7 +185,7 @@ export default function Navbar({ unreadCount = 0 }) {
 
   return (
     <>
-      {/* Mobile-only adjustments; desktop/laptop stays exactly as laid out below */}
+      {/* Responsive tweaks; desktop/laptop stays exactly as laid out below */}
       <style>{`
         /* Hide username on smaller screens */
         @media (max-width: 900px){
@@ -202,9 +201,12 @@ export default function Navbar({ unreadCount = 0 }) {
             padding: 10px 12px !important;
             height: auto !important;
           }
+          /* Logo: centered, 50% wider, 15% taller */
           .nsz-logo { 
             order: 1; 
-            height: 56px !important; 
+            height: 64px !important;             /* ~15% up from 56px */
+            transform: scale(1.5, 1.15);          /* 50% wider, 15% taller */
+            transform-origin: center; 
             margin: 0 auto !important; 
             display: block !important;
           }
@@ -226,15 +228,18 @@ export default function Navbar({ unreadCount = 0 }) {
           #menuBtn { font-size: 1.8rem !important; }
         }
 
-        /* Extra-small tweaks */
+        /* Extra-small phones */
         @media (max-width: 420px){
-          .nsz-logo { height: 52px !important; }
+          .nsz-logo { 
+            height: 60px !important;             /* ~15% up from 52px */
+            transform: scale(1.5, 1.15);
+          }
           #bellBtn { width: 30px !important; height: 30px !important; }
           .nsz-avatar { width: 36px !important; height: 36px !important; }
           #menuBtn { font-size: 1.6rem !important; }
         }
 
-        /* Desktop: keep your laptop sizing; center the whole bar items evenly */
+        /* Desktop: keep your laptop sizing; constrain search width there */
         @media (min-width: 901px){
           .nsz-search { min-width: 280px; max-width: 480px; }
         }
@@ -257,16 +262,17 @@ export default function Navbar({ unreadCount = 0 }) {
           padding: "0 24px",
         }}
       >
-        {/* Logo (kept as-is) */}
+        {/* Logo (kept as-is for laptop/desktop) */}
         <img src="/assets/nsz-logo2.png" alt="NSZ Logo" className="nsz-logo" style={{ height: 182 }} />
 
-        {/* Search (width rules are now in CSS so mobile can stretch) */}
+        {/* Search */}
         <div className="nsz-search" style={{ width: "100%" }}>
           <SearchBar />
         </div>
 
-        {/* Bell */}
+        {/* Actions */}
         <div className="nsz-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {/* Bell */}
           <div style={{ position: "relative" }} ref={bellRef}>
             <button
               id="bellBtn"
@@ -281,6 +287,7 @@ export default function Navbar({ unreadCount = 0 }) {
                 fontSize: "1.1rem",
                 cursor: "pointer",
               }}
+              aria-label="Notifications"
             >
               🔔
             </button>
@@ -302,6 +309,7 @@ export default function Navbar({ unreadCount = 0 }) {
                 {unreadCount}
               </span>
             )}
+
             {showAllPopup && (
               <div
                 style={{
@@ -323,15 +331,15 @@ export default function Navbar({ unreadCount = 0 }) {
             )}
           </div>
 
-          {/* Avatar + username */}
+          {/* Avatar + username -> Profile */}
           <Link
-            to={currentUser?.username ? `/profile/${currentUser.username}` : "/profile"}
+            to={profilePath}
             onClick={() => setMenuOpen(false)}
             style={{ display: "flex", flexDirection: "column", alignItems: "center", textDecoration: "none" }}
             aria-label="Go to profile"
           >
             <img
-              src={resolveAvatar(currentUser?.profilePic || currentUser?.profileImage, avatarVersion)}
+              src={avatarSrc}
               alt="Profile"
               crossOrigin="anonymous"
               draggable="false"
@@ -360,6 +368,7 @@ export default function Navbar({ unreadCount = 0 }) {
             id="menuBtn"
             onClick={() => setMenuOpen((p) => !p)}
             style={{ background: "none", border: "none", color: GOLD, fontSize: "2rem", cursor: "pointer" }}
+            aria-label="Menu"
           >
             ☰
           </button>
