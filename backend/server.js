@@ -50,10 +50,12 @@ function isAllowedOrigin(origin) {
 }
 
 const corsOptions = {
-  origin: (origin, cb) => (isAllowedOrigin(origin) ? cb(null, true) : cb(new Error("Not allowed by CORS"))),
+  origin: (origin, cb) =>
+    isAllowedOrigin(origin) ? cb(null, true) : cb(new Error("Not allowed by CORS")),
   credentials: true,
   methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  // NOTE: do NOT set allowedHeaders here; letting the cors middleware
+  // echo back Access-Control-Request-Headers avoids preflight blocks
   optionsSuccessStatus: 204,
 };
 
@@ -67,6 +69,7 @@ app.set("trust proxy", 1);
 
 /* ------------ CORS (REST) ------------ */
 app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // explicit preflight handler
 
 /* ------------ Body / cookies ------------ */
 app.use(express.json({ limit: "10mb" }));
@@ -107,7 +110,8 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: (origin, cb) => (isAllowedOrigin(origin) ? cb(null, true) : cb(new Error("Not allowed by CORS"))),
+    origin: (origin, cb) =>
+      isAllowedOrigin(origin) ? cb(null, true) : cb(new Error("Not allowed by CORS")),
     credentials: true,
     methods: ["GET", "POST"],
   },

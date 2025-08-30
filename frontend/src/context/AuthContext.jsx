@@ -40,8 +40,8 @@ export function AuthProvider({ children }) {
       try {
         const res = await fetch(`${API_BASE()}/api/auth/me`, {
           method: "GET",
-          credentials: "include",      // <-- IMPORTANT: send cookie
-          headers: { "Cache-Control": "no-store" },
+          credentials: "include",      // <-- send cookie
+          cache: "no-store",           // <-- avoid custom Cache-Control header (preflight-safe)
         });
 
         if (!res.ok) {
