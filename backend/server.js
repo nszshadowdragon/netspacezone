@@ -2,11 +2,13 @@
 require("dotenv").config();
 
 const express = require("express");
+const http = require("http");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const path = require("path");
 const fs = require("fs");
 const mongoose = require("mongoose");
+const { Server } = require("socket.io");
 
 const app = express();
 
@@ -17,19 +19,28 @@ const CORS_ORIGIN = (process.env.CORS_ORIGIN || "http://localhost:5173")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+
+// Add sensible defaults (deduped) for local + prod
+const DEFAULT_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://netspacezone.com",
+  "https://www.netspacezone.com",
+];
+const ORIGINS = Array.from(new Set([...DEFAULT_ORIGINS, ...CORS_ORIGIN]));
+
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 
 /* ------------ Ensure upload directory exists ------------ */
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-/* ------------ CORS ------------ */
+/* ------------ CORS (REST) ------------ */
 app.use(
   cors({
     origin: (origin, cb) => {
       // allow server-to-server / curl (no origin)
       if (!origin) return cb(null, true);
-      // allow exact matches in list; otherwise deny
-      if (CORS_ORIGIN.includes(origin)) return cb(null, true);
+      if (ORIGINS.includes(origin)) return cb(null, true);
       return cb(new Error("Not allowed by CORS"), false);
     },
     credentials: true,
@@ -43,7 +54,7 @@ app.use(cookieParser());
 
 /* ------------ Serve uploads from the configured folder ------------ */
 /* In dev: /uploads => <repo>/backend/uploads
-   In prod (Render): /uploads => /var/data/uploads (persistent disk) */
+   In prod: /uploads => persistent disk */
 app.use(
   "/uploads",
   express.static(UPLOAD_DIR, {
@@ -51,7 +62,6 @@ app.use(
     etag: true,
     index: false,
     setHeaders(res) {
-      // Hint browsers to cache but allow revalidation
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     },
   })
@@ -73,8 +83,42 @@ if (MONGO_URI) {
   console.warn("MONGO_URI missing; skipping DB connect.");
 }
 
+/* ------------ HTTP server + Socket.IO ------------ */
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: ORIGINS,
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
+  path: "/socket.io",
+});
+
+// Optional auth pass-through (reads token from client if you use it)
+io.use((socket, next) => {
+  const token =
+    socket.handshake.auth?.token ||
+    (socket.handshake.headers?.authorization || "").replace(/^Bearer\s+/i, "");
+  socket.data = socket.data || {};
+  socket.data.token = token || "";
+  return next();
+});
+
+io.on("connection", (socket) => {
+  console.log("socket connected:", socket.id);
+
+  socket.on("disconnect", () => {
+    console.log("socket disconnected:", socket.id);
+  });
+});
+
+// Make io available to routes if needed
+app.set("io", io);
+
 /* ------------ Start ------------ */
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`);
+  console.log(`CORS origins: ${ORIGINS.join(", ")}`);
   console.log(`Serving uploads from: ${UPLOAD_DIR}`);
 });

@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import SearchBar from "./SearchBar";
 import { useAuth } from "../context/AuthContext";
 
+/* --------------------- helpers --------------------- */
 function isLocalhost() {
   const h = window.location.hostname;
   return h === "localhost" || h === "127.0.0.1";
@@ -48,11 +49,12 @@ function resolveAvatar(raw, ver) {
   if (ver) u.searchParams.set("v", ver);
   return u.toString();
 }
+/* --------------------------------------------------- */
 
 export default function Navbar({ unreadCount }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout } = useAuth() || {};
 
   const [currentUser, setCurrentUser] = useState(user);
   const [avatarVersion, setAvatarVersion] = useState(() => localStorage.getItem("nsz:avatar:v") || "");
@@ -119,6 +121,7 @@ export default function Navbar({ unreadCount }) {
   const pathname = location.pathname || "/";
   const isOn = (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 
+  // Keep order; ensure Profile is ALWAYS visible in dropdown
   const menuPages = [
     { key: "spacehub", label: "SpaceHub", to: "/spacehub", isCurrent: () => isOn("/spacehub") || pathname === "/" },
     {
@@ -126,7 +129,7 @@ export default function Navbar({ unreadCount }) {
       label: "Profile",
       to: currentUser?.username ? `/profile/${currentUser.username}` : "/profile",
       isCurrent: () => isOn("/profile"),
-      hide: !currentUser?.username,
+      hide: false,
     },
     { key: "settings", label: "Settings", to: "/settings", isCurrent: () => isOn("/settings") },
     { key: "store", label: "Store", to: "/store", isCurrent: () => isOn("/store") },
@@ -136,12 +139,49 @@ export default function Navbar({ unreadCount }) {
     { key: "creatorshub", label: "CreatorsHub", to: "/creatorshub", isCurrent: () => isOn("/creatorshub") || isOn("/creators") },
   ];
 
-  const visibleMenuPages = menuPages.filter((p) => !p.hide && !p.isCurrent());
+  // Hide current page EXCEPT keep Profile visible per your request
+  const visibleMenuPages = menuPages.filter((p) => !p.hide && (!p.isCurrent() || p.key === "profile"));
 
-  // Compute a width that’s just a bit wider than the longest label currently shown
+  // width slightly larger than longest label
   const labelsForWidth = [...visibleMenuPages.map((p) => p.label), "Logout"];
-  const maxChars = Math.max(...labelsForWidth.map((s) => (s || "").length), 8); // floor
-  const dropdownWidth = `calc(${maxChars}ch + 48px)`; // add padding/spacing
+  const maxChars = Math.max(...labelsForWidth.map((s) => (s || "").length), 8);
+  const dropdownWidth = `calc(${maxChars}ch + 48px)`;
+
+  const profilePath = currentUser?.username ? `/profile/${currentUser.username}` : "/profile";
+
+  const handleLogout = useCallback(async (e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    try {
+      if (typeof logout === "function") {
+        await Promise.resolve(logout());
+      }
+      try {
+        await fetch(`${apiHost()}/api/auth/logout`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch {}
+      try {
+        localStorage.removeItem("token");
+      } catch {}
+      try {
+        if ("BroadcastChannel" in window) {
+          const bc = new BroadcastChannel("nsz_auth");
+          bc.postMessage({ type: "logout" });
+          bc.close();
+        }
+        window.dispatchEvent(new CustomEvent("nsz:user-logged-out"));
+      } catch {}
+    } finally {
+      setMenuOpen(false);
+      // 👉 Route to Landing page when logged out
+      navigate("/landing", { replace: true });
+      // If your state persists across tabs, you can force a clean slate:
+      // window.location.assign("/landing");
+    }
+  }, [logout, navigate]);
 
   return (
     <div
@@ -158,12 +198,15 @@ export default function Navbar({ unreadCount }) {
         padding: "0 24px",
       }}
     >
+      {/* Logo */}
       <img src="/assets/nsz-logo2.png" alt="NSZ Logo" style={{ height: 182 }} />
 
+      {/* Search */}
       <div style={{ minWidth: 280, maxWidth: 480, width: "100%" }}>
         <SearchBar />
       </div>
 
+      {/* Notification Bell */}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div style={{ position: "relative" }} ref={bellRef}>
           <button
@@ -223,12 +266,24 @@ export default function Navbar({ unreadCount }) {
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      {/* Avatar + username link to profile */}
+      <Link
+        to={profilePath}
+        onClick={() => setMenuOpen(false)}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          textDecoration: "none",
+          cursor: "pointer",
+        }}
+        aria-label="Go to profile"
+      >
         <img
           src={avatarSrc}
           alt="Profile"
           crossOrigin="anonymous"
-          onClick={() => currentUser?.username && navigate(`/profile/${currentUser.username}`)}
+          draggable="false"
           onError={(e) => {
             if (!e.currentTarget.dataset.fallback) {
               e.currentTarget.dataset.fallback = "1";
@@ -241,13 +296,12 @@ export default function Navbar({ unreadCount }) {
             borderRadius: "50%",
             objectFit: "cover",
             border: `2px solid ${GOLD}`,
-            cursor: currentUser?.username ? "pointer" : "default",
           }}
         />
         <div style={{ color: GOLD, fontWeight: 700, fontSize: "1rem", marginTop: 3 }}>
           {currentUser?.username || "Guest"}
         </div>
-      </div>
+      </Link>
 
       {/* Hamburger + Dropdown */}
       <div ref={menuRef}>
@@ -270,10 +324,9 @@ export default function Navbar({ unreadCount }) {
               borderRadius: 12,
               padding: "10px 8px",
               zIndex: 1001,
-              width: dropdownWidth, // auto-sized to longest label
+              width: dropdownWidth,
             }}
           >
-            {/* Items */}
             {visibleMenuPages.map((item) => (
               <div
                 key={item.key}
@@ -300,18 +353,15 @@ export default function Navbar({ unreadCount }) {
               </div>
             ))}
 
-            {/* Logout — same border & centering for uniformity */}
-            <div
-              onClick={() => {
-                logout();
-                setMenuOpen(false);
-                navigate("/spacehub", { replace: true });
-              }}
+            {/* Logout -> Landing */}
+            <button
+              onClick={handleLogout}
               style={{
                 margin: "6px 6px",
                 padding: "12px 16px",
                 border: `1px solid ${GOLD}`,
                 borderRadius: 10,
+                background: "transparent",
                 color: "#ff4444",
                 fontWeight: 800,
                 cursor: "pointer",
@@ -319,11 +369,12 @@ export default function Navbar({ unreadCount }) {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                userSelect: "none",
+                width: "calc(100% - 12px)",
               }}
+              aria-label="Log out"
             >
               Logout
-            </div>
+            </button>
           </div>
         )}
       </div>

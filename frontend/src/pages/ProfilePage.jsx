@@ -1,6 +1,6 @@
 // frontend/src/pages/ProfilePage.jsx
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useEffect, useMemo } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 // ---------- helpers to make avatar URLs work in local & prod ----------
@@ -12,7 +12,7 @@ function apiHost() {
 
 // inline fallback (no external requests)
 const fallbackDataUri =
-  'data:image/svg+xml;utf8,' +
+  "data:image/svg+xml;utf8," +
   encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">
       <rect width="100%" height="100%" fill="#111"/>
@@ -33,7 +33,9 @@ function resolveAvatar(raw) {
   if (!src) return fallbackDataUri;
   if (/^(data:|blob:)/i.test(src)) return src;
 
-  const local = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const local =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
   const host = apiHost();
 
   // If it's absolute, try to rewrite api host to local in dev
@@ -41,7 +43,10 @@ function resolveAvatar(raw) {
     try {
       const u = new URL(src);
       // Only rewrite if it's our API host and it's an /uploads/* path
-      if (/api\.netspacezone\.com$/i.test(u.hostname) && u.pathname.startsWith("/uploads/")) {
+      if (
+        /api\.netspacezone\.com$/i.test(u.hostname) &&
+        u.pathname.startsWith("/uploads/")
+      ) {
         return (local ? "http://localhost:5000" : "https://api.netspacezone.com") + u.pathname;
       }
       return src; // leave any other absolute URLs untouched
@@ -59,6 +64,7 @@ function resolveAvatar(raw) {
 
 export default function ProfilePage() {
   const navigate = useNavigate();
+  const { username: routeUsername } = useParams();
   const { user } = useAuth();
 
   const [isFriend, setIsFriend] = useState(false);
@@ -71,22 +77,64 @@ export default function ProfilePage() {
     interests: true,
   });
 
+  // Normalize /profile -> /profile/:me once we know who "me" is.
+  // IMPORTANT: Do NOT redirect to home/spacehub from here.
   useEffect(() => {
-    if (!user) {
-      navigate("/", { replace: true });
+    if (!routeUsername && user?.username) {
+      navigate(`/profile/${user.username}`, { replace: true });
     }
-  }, [user, navigate]);
+  }, [routeUsername, user?.username, navigate]);
+
+  // Which username to show in UI
+  const displayUsername = useMemo(
+    () => routeUsername || user?.username || "User",
+    [routeUsername, user?.username]
+  );
+
+  // Avatar: show the signed-in user's avatar on their own page;
+  // for other users (until wired), use a placeholder.
+  const avatar = useMemo(() => {
+    if (routeUsername && user?.username && routeUsername !== user.username) {
+      return fallbackDataUri;
+    }
+    return resolveAvatar(user?.profilePic || user?.profileImage);
+  }, [routeUsername, user?.profilePic, user?.profileImage, user?.username]);
 
   const toggleSection = (key) => {
     setSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  if (!user) return null;
-
-  const avatar = resolveAvatar(user?.profilePic || user?.profileImage);
+  // If not logged in and no :username param, show a friendly gate (no redirect).
+  if (!user && !routeUsername) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          width: "100vw",
+          background: "#000",
+          color: "#ffe259",
+          padding: "2rem",
+        }}
+      >
+        <h2 style={{ margin: 0, marginBottom: "0.5rem" }}>Profile</h2>
+        <p style={{ color: "#ddd" }}>
+          Sign in to view your profile, or open someone’s profile via a URL like{" "}
+          <code style={{ color: "#ffe259" }}>/profile/nszshadowdragon</code>.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ minHeight: "100vh", width: "100vw", background: "#000", color: "#ffe259", position: "relative" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100vw",
+        background: "#000",
+        color: "#ffe259",
+        position: "relative",
+      }}
+    >
       {/* BACKGROUND IMAGE */}
       <div
         style={{
@@ -120,7 +168,9 @@ export default function ProfilePage() {
             <small style={{ display: "block", marginTop: "1rem" }}>
               123 Friends • 56 Posts • 900 Likes
             </small>
-            <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
+            <div
+              style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}
+            >
               <button style={actionBtn} onClick={() => setIsFriend(!isFriend)}>
                 {isFriend ? "Unfriend" : "Add"}
               </button>
@@ -150,7 +200,7 @@ export default function ProfilePage() {
                 }
               }}
             />
-            <h1 style={{ margin: "0" }}>{user?.username}</h1>
+            <h1 style={{ margin: "0" }}>@{displayUsername}</h1>
           </div>
 
           {/* RIGHT: Highlights + Edit */}
@@ -172,8 +222,12 @@ export default function ProfilePage() {
               </button>
             </div>
             <h3 style={{ marginBottom: "0.5rem" }}>Highlights</h3>
-            <p><strong>Featured In:</strong> Top Creators</p>
-            <p><strong>Achievements:</strong> 1000+ Likes • Creator of the Month</p>
+            <p>
+              <strong>Featured In:</strong> Top Creators
+            </p>
+            <p>
+              <strong>Achievements:</strong> 1000+ Likes • Creator of the Month
+            </p>
           </div>
         </div>
 
@@ -189,8 +243,12 @@ export default function ProfilePage() {
               boxShadow: "0 0 10px rgba(255,226,89,0.5)",
             }}
           >
-            <h2 style={{ marginTop: 0, color: "#ffe259" }}>⚡ Profile Customization</h2>
-            <p style={{ marginBottom: "1rem", color: "#aaa" }}>Toggle sections and adjust your layout:</p>
+            <h2 style={{ marginTop: 0, color: "#ffe259" }}>
+              ⚡ Profile Customization
+            </h2>
+            <p style={{ marginBottom: "1rem", color: "#aaa" }}>
+              Toggle sections and adjust your layout:
+            </p>
             {Object.keys(sections).map((key) => (
               <div key={key} style={{ marginBottom: "0.5rem" }}>
                 <label>
@@ -239,7 +297,9 @@ export default function ProfilePage() {
                     marginBottom: "0.5rem",
                   }}
                 />
-                <button style={{ ...btn, background: "#ffe259", color: "#000" }}>Post</button>
+                <button style={{ ...btn, background: "#ffe259", color: "#000" }}>
+                  Post
+                </button>
                 <div style={{ marginTop: "1rem" }}>
                   {["First post!", "Excited to join NSZ!"].map((post, i) => (
                     <div
@@ -252,7 +312,7 @@ export default function ProfilePage() {
                         background: "rgba(17,17,17,0.6)",
                       }}
                     >
-                      <strong>{user?.username}</strong>
+                      <strong>@{displayUsername}</strong>
                       <p style={{ margin: "0.3rem 0" }}>{post}</p>
                     </div>
                   ))}
@@ -338,7 +398,10 @@ export default function ProfilePage() {
                     <div key={i} style={{ textAlign: "center" }}>
                       <img
                         src="https://via.placeholder.com/80"
-                        style={{ borderRadius: "50%", border: "1px solid #333" }}
+                        style={{
+                          borderRadius: "50%",
+                          border: "1px solid #333",
+                        }}
                         alt="friend"
                         onError={(e) => {
                           e.currentTarget.src =

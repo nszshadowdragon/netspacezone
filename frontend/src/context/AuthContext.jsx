@@ -1,94 +1,132 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+// frontend/src/context/AuthContext.jsx
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import { connectSocket, disconnectSocket } from "../socket";
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
+export const useAuth = () => useContext(AuthContext);
 
-const API_BASE =
-  import.meta.env.MODE === "production"
-    ? "https://api.netspacezone.com"
-    : "";
+// ----- API base (dev + prod) -----
+function isLocalhost() {
+  const h = window.location.hostname;
+  return h === "localhost" || h === "127.0.0.1";
+}
+function API_BASE() {
+  const env = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+  return env || (isLocalhost() ? "http://localhost:5000" : "https://api.netspacezone.com");
+}
+
+// Extract user/token from various shapes
+function extractUser(obj) {
+  if (!obj) return null;
+  return obj.user ?? obj.profile ?? obj.data?.user ?? obj.data?.profile ?? null;
+}
+function extractToken(obj) {
+  if (!obj) return null;
+  return obj.token ?? obj.accessToken ?? obj.data?.token ?? obj.data?.accessToken ?? null;
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);      // ✅ loading while checking session
-  const [loggingOut, setLoggingOut] = useState(false); // ✅ loading while logging out
+  const [loading, setLoading] = useState(true);   // bootstrapping /api/auth/me
+  const [error, setError] = useState("");
 
-  // Check with backend on mount
+  // ---- bootstrap session on first mount ----
   useEffect(() => {
-    const checkUser = async () => {
+    let cancelled = false;
+
+    async function boot() {
+      setLoading(true);
+      setError("");
       try {
-        const res = await fetch(`${API_BASE}/api/auth/me`, {
-          credentials: "include",
+        const res = await fetch(`${API_BASE()}/api/auth/me`, {
+          method: "GET",
+          credentials: "include",      // <-- IMPORTANT: send cookie
+          headers: { "Cache-Control": "no-store" },
         });
 
-        if (res.ok) {
-          const data = await res.json();
-          setUser(data.user);
-          localStorage.setItem("user", JSON.stringify(data.user));
+        if (!res.ok) {
+          // 401 means not logged in; that’s fine
+          if (res.status !== 401) {
+            try {
+              const msg = await res.text();
+              console.debug("[auth] /me non-401:", res.status, msg);
+            } catch {}
+          }
+          if (!cancelled) setUser(null);
         } else {
-          setUser(null);
-          localStorage.removeItem("user");
+          let data = null;
+          try { data = await res.json(); } catch {}
+          const u = extractUser(data) ?? data ?? null;
+          if (!cancelled) setUser(u);
         }
       } catch (err) {
-        console.error("Auth check failed:", err);
-        setUser(null);
-        localStorage.removeItem("user");
+        if (!cancelled) setError(err?.message || "Failed to reach auth service");
+        if (!cancelled) setUser(null);
       } finally {
-        setLoading(false); // ✅ finished checking
+        if (!cancelled) setLoading(false);
       }
-    };
-    checkUser();
+    }
+
+    boot();
+    return () => { cancelled = true; };
   }, []);
 
-  // Login using backend + immediately sync user
-  const login = async (identifier, password) => {
-    const res = await fetch(`${API_BASE}/api/auth/login`, {
+  // ---- login & logout helpers (always include credentials) ----
+  const login = useCallback(async (identifier, password) => {
+    setError("");
+    const body = { identifier, password };
+    const res = await fetch(`${API_BASE()}/api/auth/login`, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier, password }),
-      credentials: "include",
+      body: JSON.stringify(body),
     });
-
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) throw new Error(data.error || "Login failed");
-
-    const meRes = await fetch(`${API_BASE}/api/auth/me`, {
-      credentials: "include",
-    });
-
-    if (meRes.ok) {
-      const meData = await meRes.json();
-      setUser(meData.user);
-      localStorage.setItem("user", JSON.stringify(meData.user));
-      return meData.user;
-    } else {
-      throw new Error("Failed to fetch user after login");
+    if (!res.ok) {
+      let msg = `Login failed (${res.status})`;
+      try {
+        const j = await res.json();
+        if (j?.error || j?.message) msg = j.error || j.message;
+      } catch {}
+      throw new Error(msg);
     }
-  };
+    let data = {};
+    try { data = await res.json(); } catch {}
+    const u = extractUser(data) ?? data ?? null;
+    setUser(u);
+    return u;
+  }, []);
 
-  // Logout with smoother handling
-  const logout = async () => {
-    setLoggingOut(true);
+  const logout = useCallback(async () => {
     try {
-      await fetch(`${API_BASE}/api/auth/logout`, {
+      await fetch(`${API_BASE()}/api/auth/logout`, {
         method: "POST",
         credentials: "include",
+        headers: { "Content-Type": "application/json" },
       });
-    } catch (err) {
-      console.error("Logout request failed:", err);
-    }
+    } catch {}
     setUser(null);
-    localStorage.removeItem("user");
-    setLoggingOut(false);
-  };
+  }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, login, logout, loading, loggingOut }}>
-      {children}
-    </AuthContext.Provider>
+  // ---- socket lifecycle: connect when authed, disconnect otherwise ----
+  useEffect(() => {
+    if (!loading && user) {
+      connectSocket();   // single connect (singleton in src/socket.js)
+    } else {
+      disconnectSocket();
+    }
+  }, [loading, user]);
+
+  const value = useMemo(
+    () => ({
+      user,
+      loading,
+      error,
+      setUser,
+      login,
+      logout,
+    }),
+    [user, loading, error, login, logout]
   );
-}
 
-export function useAuth() {
-  return useContext(AuthContext);
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
