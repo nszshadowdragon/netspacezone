@@ -77,7 +77,7 @@ function getThemeStyles(theme) {
 function InlineComposer({ onCreated, onClose, themeStyles }) {
   const [title, setTitle] = useState('');
   const [tags, setTags] = useState([]);
-  const [tagInput, setTagInput] = useState('');
+  const [tagInput, setTagInput] = useState(''); // <-- fixed (removed stray "the")
   const [content, setContent] = useState('');
   const [cover, setCover] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -377,7 +377,7 @@ function BlogCard({ post, meId, onLike, onFollow, onOpen, themeStyles }) {
           <img
             src={post.coverImage}
             alt=""
-            style={{ width: '100%', borderRadius: 10, display: 'block' }}
+            style={{ width: '100%', borderRadius: 10, display: 'block', height: 'auto' }}
           />
         </div>
       )}
@@ -580,7 +580,7 @@ function PostModal({
             <img
               src={post.coverImage}
               alt=""
-              style={{ width: '100%', borderRadius: 10, display: 'block' }}
+              style={{ width: '100%', borderRadius: 10, display: 'block', height: 'auto' }}
             />
           </div>
         )}
@@ -760,6 +760,14 @@ export default function BlogPage() {
   }, []);
   const themeStyles = getThemeStyles(theme);
 
+  // Mobile detection for responsive inline styles
+  const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth <= 900 : false));
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 900);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   const [tab, setTab] = useState('hot');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -921,8 +929,22 @@ export default function BlogPage() {
     }
   };
 
+  // Header filters/tabs — sticky on mobile
   const HeaderTabs = (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+    <div
+      style={{
+        display: 'flex',
+        gap: isMobile ? 6 : 8,
+        alignItems: 'stretch',
+        flexWrap: isMobile ? 'nowrap' : 'wrap',
+        overflowX: isMobile ? 'auto' : 'visible',
+        position: isMobile ? 'sticky' : 'static',
+        top: isMobile ? 0 : 'auto',
+        zIndex: isMobile ? 30 : 'auto',
+        background: isMobile ? themeStyles.pageBg : 'transparent',
+        padding: isMobile ? '8px 0' : 0,
+      }}
+    >
       {['hot', 'new', 'top'].map((t) => (
         <button
           key={t}
@@ -935,25 +957,29 @@ export default function BlogPage() {
             color: tab === t ? '#fff' : themeStyles.text,
             fontWeight: 800,
             cursor: 'pointer',
+            flex: isMobile ? '0 0 auto' : 'none',
           }}
         >
           {t[0].toUpperCase() + t.slice(1)}
         </button>
       ))}
+
       <input
         placeholder="Search posts…"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && load('init')}
         style={{
-          marginLeft: 8,
+          marginLeft: isMobile ? 0 : 8,
           padding: '8px 12px',
           borderRadius: 10,
           border: `1px solid ${themeStyles.border}`,
           background: themeStyles.cardBg,
           color: themeStyles.text,
           outline: 'none',
-          minWidth: 240,
+          minWidth: isMobile ? 0 : 240,
+          width: isMobile ? 220 : 'auto',
+          flex: isMobile ? '0 0 auto' : 'none',
         }}
       />
       <input
@@ -968,7 +994,9 @@ export default function BlogPage() {
           background: themeStyles.cardBg,
           color: themeStyles.text,
           outline: 'none',
-          minWidth: 220,
+          minWidth: isMobile ? 0 : 220,
+          width: isMobile ? 200 : 'auto',
+          flex: isMobile ? '0 0 auto' : 'none',
         }}
       />
       <button
@@ -981,6 +1009,7 @@ export default function BlogPage() {
           color: '#fff',
           fontWeight: 800,
           cursor: 'pointer',
+          flex: isMobile ? '0 0 auto' : 'none',
         }}
         title="Apply filters"
       >
@@ -996,15 +1025,15 @@ export default function BlogPage() {
         margin: '0 auto',
         padding: '24px 16px',
         display: 'grid',
-        gridTemplateColumns: '1fr 340px',
-        gap: 24,
+        gridTemplateColumns: isMobile ? '1fr' : '1fr 340px',
+        gap: isMobile ? 16 : 24,
         background: themeStyles.pageBg,
         color: themeStyles.text,
       }}
     >
       {/* left column */}
       <div>
-        <h1 style={{ margin: '0 0 10px 0', fontSize: 36, fontWeight: 900, color: themeStyles.text }}>
+        <h1 style={{ margin: '0 0 10px 0', fontSize: isMobile ? 28 : 36, fontWeight: 900, color: themeStyles.text }}>
           NSZ Blog — {tab[0].toUpperCase() + tab.slice(1)}
         </h1>
         {HeaderTabs}
