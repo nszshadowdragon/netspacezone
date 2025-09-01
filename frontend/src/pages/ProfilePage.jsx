@@ -2,15 +2,19 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import ImageGallery from "../components/ImageGallery";
 
-// ---------- helpers to make avatar URLs work in local & prod ----------
+/* ------------------- API host helpers (local vs prod) ------------------- */
 function apiHost() {
   const h = window.location.hostname;
   const isLocal = h === "localhost" || h === "127.0.0.1";
   return isLocal ? "http://localhost:5000" : "https://api.netspacezone.com";
 }
+const API_HOST =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
+  apiHost();
 
-// inline fallback (no external requests)
+/* ----------------------- avatar fallback data URI ----------------------- */
 const fallbackDataUri =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(
@@ -21,13 +25,7 @@ const fallbackDataUri =
     </svg>`
   );
 
-/**
- * Accepts:
- *   - data: / blob: URIs
- *   - absolute http(s) URLs (rewrites api.netspacezone.com → localhost in dev)
- *   - '/uploads/filename' | 'uploads/filename' | 'filename'
- * Returns an absolute URL that works both locally and in production.
- */
+/** Normalize avatar paths for local/prod */
 function resolveAvatar(raw) {
   let src = (raw || "").trim();
   if (!src) return fallbackDataUri;
@@ -38,25 +36,45 @@ function resolveAvatar(raw) {
     window.location.hostname === "127.0.0.1";
   const host = apiHost();
 
-  // If it's absolute, try to rewrite api host to local in dev
   if (/^https?:\/\//i.test(src)) {
     try {
       const u = new URL(src);
       if (/api\.netspacezone\.com$/i.test(u.hostname) && u.pathname.startsWith("/uploads/")) {
         return (local ? "http://localhost:5000" : "https://api.netspacezone.com") + u.pathname;
       }
-      return src; // leave any other absolute URLs untouched
+      return src;
     } catch {
-      // fall through to path normalize
+      // fall through
     }
   }
 
-  // Normalize relative path to /uploads/*
-  src = src.replace(/^\.?\/*/, ""); // strip leading ./ or /
+  src = src.replace(/^\.?\/*/, "");
   if (!src.startsWith("uploads/")) src = `uploads/${src}`;
   return `${host}/${src}`;
 }
-// ---------------------------------------------------------------------------
+
+/* ----------------------- profile lookup by username ---------------------- */
+async function fetchProfileByUsername(username) {
+  // Try a few likely endpoints; first one that returns OK wins.
+  const candidates = [
+    `${API_HOST}/api/users/by-username/${encodeURIComponent(username)}`,
+    `${API_HOST}/api/auth/user/by-username/${encodeURIComponent(username)}`,
+    `${API_HOST}/api/auth/profile?username=${encodeURIComponent(username)}`,
+    `${API_HOST}/api/users?username=${encodeURIComponent(username)}`,
+  ];
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return data.user || data.profile || data; // support various shapes
+      }
+    } catch {
+      /* ignore and try next */
+    }
+  }
+  return null;
+}
 
 export default function ProfilePage() {
   const navigate = useNavigate();
@@ -73,28 +91,53 @@ export default function ProfilePage() {
     interests: true,
   });
 
+  // Who is the profile owner on this page?
+  const [profileUser, setProfileUser] = useState(null);
+  const viewerIsOwner = !!(user && profileUser && user._id === profileUser._id);
+
   // Normalize /profile -> /profile/:me once we know who "me" is.
   // IMPORTANT: Do NOT redirect to home/spacehub from here.
   useEffect(() => {
     if (!routeUsername && user?.username) {
       navigate(`/profile/${user.username}`, { replace: true });
     }
-  }, [routeUsername, user?.username, navigate]);
+  }, [routeUsername, user?.username, navigate]); // :contentReference[oaicite:2]{index=2}
+
+  // Load the profile owner (self or by username)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!routeUsername) {
+        // Own profile
+        setProfileUser(user || null);
+        return;
+      }
+      if (user?.username && routeUsername === user.username) {
+        setProfileUser(user);
+        return;
+      }
+      const other = await fetchProfileByUsername(routeUsername);
+      if (!cancelled) setProfileUser(other);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [routeUsername, user]);
 
   // Which username to show in UI
   const displayUsername = useMemo(
     () => routeUsername || user?.username || "User",
     [routeUsername, user?.username]
-  );
+  ); // :contentReference[oaicite:3]{index=3}
 
-  // Avatar: show the signed-in user's avatar on their own page;
-  // for other users (until wired), use a placeholder.
+  // Avatar: show the profile owner's avatar (self or other)
   const avatar = useMemo(() => {
-    if (routeUsername && user?.username && routeUsername !== user.username) {
-      return fallbackDataUri;
-    }
-    return resolveAvatar(user?.profilePic || user?.profileImage);
-  }, [routeUsername, user?.profilePic, user?.profileImage, user?.username]);
+    const src =
+      profileUser?.profilePic ||
+      profileUser?.profileImage ||
+      (viewerIsOwner ? user?.profilePic || user?.profileImage : "");
+    return resolveAvatar(src);
+  }, [profileUser, viewerIsOwner, user?.profilePic, user?.profileImage]);
 
   const toggleSection = (key) => {
     setSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -302,39 +345,17 @@ export default function ProfilePage() {
 
             {sections.gallery && (
               <div className="section">
-                <h2>Photos</h2>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
-                    gap: "1rem",
-                  }}
-                >
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <img
-                      key={i}
-                      src="https://via.placeholder.com/300"
-                      alt="gallery"
-                      style={{
-                        borderRadius: 8,
-                        width: "100%",
-                        height: 150,
-                        objectFit: "cover",
-                        border: "1px solid #333",
-                      }}
-                      onError={(e) => {
-                        e.currentTarget.src =
-                          "data:image/svg+xml;utf8," +
-                          encodeURIComponent(
-                            `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='150'>
-                               <rect width='100%' height='100%' fill='#111'/>
-                               <text x='50%' y='50%' fill='#ffe259' text-anchor='middle' font-family='Arial' font-size='16'>image</text>
-                             </svg>`
-                          );
-                      }}
-                    />
-                  ))}
-                </div>
+                <h2 style={{ marginTop: 0 }}>Photos</h2>
+
+                {/* === Real Gallery (owner-aware) === */}
+                {profileUser ? (
+                  <ImageGallery
+                    ownerId={profileUser._id}
+                    canEdit={viewerIsOwner}
+                  />
+                ) : (
+                  <div style={{ color: "#bbb" }}>Loading profile…</div>
+                )}
               </div>
             )}
 
