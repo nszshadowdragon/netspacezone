@@ -1,8 +1,8 @@
 // src/components/ImageGallery.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
-import GalleryPopup from "./GalleryPopup";
-import ImagePopupViewer from "./ImagePopupViewer";
+import GalleryPopup from "./GalleryPopup.jsx";
+import ImagePopupViewer from "./ImagePopupViewer.jsx";
 import { useDropzone } from "react-dropzone";
 import { DragDropContext, Droppable, Draggable } from "react-beautiful-dnd";
 import { toast } from "react-toastify";
