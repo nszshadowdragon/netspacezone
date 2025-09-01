@@ -1,6 +1,38 @@
+// src/pages/SettingsPage.jsx
 import React, { useRef, useState, useEffect, Fragment } from "react";
 import { useAuth } from "../context/AuthContext";
 import axios from "axios";
+
+/* ---------- Runtime-aware CSS for mobile like SignUp ---------- */
+const MOBILE_CSS = `
+:root{ --gold:#ffe259; --ink:#111; --text:#ffe259; --muted:#bdbdbd; --panel:#15151a; }
+html,body{ background:#000; color:var(--text); }
+*{ box-sizing:border-box; }
+input, select, textarea, button { font-size:16px; } /* avoid iOS zoom */
+
+/* Grid similar to SignUp: left nav (desktop) + content */
+.set-wrap{ min-height:100vh; min-height:100dvh; width:100%; background:#000; color:var(--text); padding:16px; padding-bottom:max(16px, env(safe-area-inset-bottom)); }
+.set-grid{ display:grid; gap:16px; grid-template-columns: 150px 1fr; align-items:start; }
+
+/* Desktop left nav */
+.side-nav{ position:sticky; top:84px; align-self:flex-start; width:150px; background:#15151a; border-radius:10px; box-shadow:0 2px 10px #444a; padding:10px; height:fit-content; }
+
+/* Mobile sticky pills (hidden on desktop) */
+.mobile-steps{ display:none; }
+.pills{ display:flex; gap:8px; overflow-x:auto; -webkit-overflow-scrolling:touch; padding:8px; background:#0b0b0b; border:1px solid #222; border-radius:10px; position:sticky; top:8px; z-index:5; box-shadow:0 2px 12px rgba(0,0,0,.35); }
+.pill-btn{ white-space:nowrap; padding:10px 14px; border-radius:999px; border:1px solid #2d2d32; background:#232326; color:var(--text); font-weight:800; cursor:pointer; }
+.pill-btn:active{ transform:translateY(1px); }
+
+/* Content column */
+.settings-col{ flex:1; max-width:900px; margin:0 auto; }
+
+/* Responsive breakpoints */
+@media (max-width: 900px){
+  .set-grid{ grid-template-columns: 1fr; }
+  .side-nav{ display:none; }
+  .mobile-steps{ display:block; margin-bottom:10px; }
+}
+`;
 
 /* ---------- API base (works in prod & dev) ---------- */
 const API_HOST =
@@ -333,7 +365,7 @@ export default function SettingsPage() {
   function renderField(f) {
     if (f.name === "profilePic") return null;
 
-    // BASIC — USERNAME
+    // BASIC — USERNAME (edit mode)
     if (editingSection === "basic" && f.name === "username") {
       const sameAsCurrent =
         (form.username || "").trim().toLowerCase() ===
@@ -376,7 +408,7 @@ export default function SettingsPage() {
       );
     }
 
-    // BASIC — EMAIL
+    // BASIC — EMAIL (edit mode)
     if (editingSection === "basic" && f.name === "email") {
       return (
         <div style={{ marginBottom: 13 }}>
@@ -398,7 +430,7 @@ export default function SettingsPage() {
       );
     }
 
-    // BASIC — BIRTHDAY (read-only)
+    // BASIC — BIRTHDAY (read-only in settings)
     if (editingSection === "basic" && f.name === "birthday") {
       return (
         <div style={{ marginBottom: 13 }}>
@@ -795,8 +827,6 @@ export default function SettingsPage() {
   const cardSectionStyle = {
     padding: "0 22px 18px 22px",
     marginBottom: 36,
-    marginLeft: "10%",
-    marginRight: "auto",
     background: THEME.sectionBackground,
     border:
       THEME.sectionBorder === "transparent"
@@ -888,6 +918,9 @@ export default function SettingsPage() {
         }
       }}
     >
+      {/* Inject mobile CSS (mirrors SignUp) */}
+      <style dangerouslySetInnerHTML={{ __html: MOBILE_CSS }} />
+
       {/* Toast */}
       {toast.msg && (
         <div
@@ -911,49 +944,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Left quick-nav */}
-      <aside
-        style={{
-          position: "fixed",
-          top: 84,
-          left: 0,
-          width: 150,
-          zIndex: 20,
-          background: "#15151a",
-          borderRadius: 13,
-          boxShadow: "0 2px 16px #222a",
-          padding: "16px 8px",
-          marginLeft: 18,
-        }}
-      >
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-          {SECTION_LIST.map((section) => (
-            <li key={section.refKey} style={{ marginBottom: 18 }}>
-              <button
-                type="button"
-                onClick={() => scrollToSection(section.refKey)}
-                style={{
-                  width: "100%",
-                  padding: "11px 0",
-                  color: THEME.goldTextColor,
-                  fontWeight: 700,
-                  background: "#232326",
-                  border: "none",
-                  borderRadius: 9,
-                  cursor: "pointer",
-                  boxShadow: "0 1px 4px #2228",
-                  fontSize: "1.11rem",
-                  letterSpacing: 0.4,
-                }}
-              >
-                {section.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </aside>
-
-      {/* watermark */}
+      {/* Watermark (kept subtle; auto-hides behind content on mobile due to grid) */}
       <img
         src="/assets/nsz-logo.png"
         alt="NSZ Logo"
@@ -966,241 +957,279 @@ export default function SettingsPage() {
           maxWidth: "380px",
           minWidth: "170px",
           opacity: 0.26,
-          zIndex: 9,
+          zIndex: 0,
           pointerEvents: "none",
           filter: "drop-shadow(0 0 55px #00ffe1) brightness(1.13)",
         }}
       />
 
-      <div
-        style={{
-          position: "relative",
-          zIndex: 11,
-          marginLeft: "13vw",
-          marginRight: "13vw",
-          width: "clamp(330px, 48vw, 670px)",
-          maxWidth: "100%",
-          minHeight: "100vh",
-          paddingTop: 38,
-          paddingBottom: 60,
-          overflowX: "hidden",
-        }}
-      >
-        <form
-          className="max-w-xl"
-          style={{ color: THEME.goldTextColor }}
-          autoComplete="off"
-          onSubmit={(e) => e.preventDefault()}
-        >
-          {/* Basic Info */}
-          <section ref={basicInfoRef} style={cardSectionStyle}>
-            <h2 style={sectionTitle}>Step 1: Basic Info</h2>
-            {sectionFields.basic.map((f) => (
-              <Fragment key={f.name}>{renderField(f)}</Fragment>
-            ))}
-            {editingSection === "basic" ? (
-              <div style={{ marginTop: 24 }}>
-                <button type="button" onClick={handleUndo} style={buttonStyleUndo} disabled={saving}>
-                  Undo Changes
-                </button>
-                <button type="button" onClick={handleCancel} style={buttonStyleCancel} disabled={saving}>
-                  Cancel
-                </button>
-                <button type="button" onClick={() => handleSave("basic")} style={buttonStyleSave} disabled={saving}>
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-            ) : (
-              <button type="button" onClick={() => handleEdit("basic")} style={buttonStyleEdit}>
-                Edit
-              </button>
-            )}
-          </section>
+      {/* Mobile step pills (sticky) */}
+      <div className="mobile-steps">
+        <div className="pills">
+          {SECTION_LIST.map((s) => (
+            <button
+              key={s.refKey}
+              type="button"
+              className="pill-btn"
+              onClick={() => scrollToSection(s.refKey)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-          {/* Security */}
-          <section ref={securityRef} style={cardSectionStyle}>
-            <h2 style={sectionTitle}>Step 2: Security</h2>
+      {/* Grid similar to SignUp (left nav hidden on mobile) */}
+      <div className="set-wrap">
+        <div className="set-grid">
+          {/* Side quick-nav (desktop) */}
+          <nav className="side-nav">
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {SECTION_LIST.map((section) => (
+                <li key={section.refKey} style={{ marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => scrollToSection(section.refKey)}
+                    style={{
+                      width: "100%",
+                      padding: "11px 0",
+                      color: THEME.goldTextColor,
+                      fontWeight: 700,
+                      background: "#232326",
+                      border: "1px solid #2d2d32",
+                      borderRadius: 9,
+                      cursor: "pointer",
+                      boxShadow: "0 1px 4px #2228",
+                      fontSize: "1.05rem",
+                      letterSpacing: 0.4,
+                    }}
+                  >
+                    {section.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </nav>
 
-            {editingSection === "security" &&
-              sectionFields.security
-                .filter((f) => ["currentPassword", "password", "confirmPassword"].includes(f.name))
-                .map((f) => <Fragment key={f.name}>{renderField(f)}</Fragment>)}
-
-            {editingSection === "security" ? (
-              <div style={{ marginTop: 24 }}>
-                <button type="button" onClick={handleUndo} style={buttonStyleUndo} disabled={saving}>
-                  Undo Changes
-                </button>
-                <button type="button" onClick={handleCancel} style={buttonStyleCancel} disabled={saving}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSave("security")}
-                  style={buttonStyleSave}
-                  disabled={saving}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setEditingSection("security")}
-                style={buttonStyleEdit}
-              >
-                Edit
-              </button>
-            )}
-          </section>
-
-          {/* Profile */}
-          <section ref={profileRef} style={cardSectionStyle}>
-            <h2 style={sectionTitle}>Step 3: Profile</h2>
-
-            <div style={{ marginBottom: 17 }}>
-              <label
-                style={{
-                  fontWeight: 700,
-                  color: THEME.goldTextColor,
-                  fontSize: 16,
-                  display: "block",
-                  marginBottom: 5,
-                }}
-              >
-                Profile Image
-              </label>
-              <div>
-                {editingSection === "profile" &&
-                form.profilePic &&
-                typeof form.profilePic === "object" ? (
-                  <img
-                    src={URL.createObjectURL(form.profilePic)}
-                    alt="Preview"
-                    width={98}
-                    style={{ borderRadius: 15, marginBottom: 7, background: "#111" }}
-                  />
+          {/* Content column */}
+          <div className="settings-col" style={{ zIndex: 1 }}>
+            <form
+              className="max-w-xl"
+              style={{ color: THEME.goldTextColor, paddingTop: 8, paddingBottom: 60 }}
+              autoComplete="off"
+              onSubmit={(e) => e.preventDefault()}
+            >
+              {/* Basic Info */}
+              <section ref={basicInfoRef} style={cardSectionStyle}>
+                <h2 style={sectionTitle}>Step 1: Basic Info</h2>
+                {sectionFields.basic.map((f) => (
+                  <Fragment key={f.name}>{renderField(f)}</Fragment>
+                ))}
+                {editingSection === "basic" ? (
+                  <div style={{ marginTop: 24 }}>
+                    <button type="button" onClick={handleUndo} style={buttonStyleUndo} disabled={saving}>
+                      Undo Changes
+                    </button>
+                    <button type="button" onClick={handleCancel} style={buttonStyleCancel} disabled={saving}>
+                      Cancel
+                    </button>
+                    <button type="button" onClick={() => handleSave("basic")} style={buttonStyleSave} disabled={saving}>
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
                 ) : (
-                  <img
-                    src={getProfileImageSrc(baseUser)}
-                    alt="Profile"
-                    width={98}
-                    style={{ borderRadius: 15, marginBottom: 7, background: "#111" }}
-                  />
+                  <button type="button" onClick={() => handleEdit("basic")} style={buttonStyleEdit}>
+                    Edit
+                  </button>
                 )}
-              </div>
-              {editingSection === "profile" && (
-                <input
-                  type="file"
-                  name="profilePic"
-                  accept="image/*"
-                  onChange={handleChange}
-                  style={{ marginBottom: 10 }}
-                />
-              )}
-            </div>
+              </section>
 
-            {editingSection === "profile" ? (
-              <>
-                {/* Interests editor */}
-                <Fragment key="interests">{renderField({ label: "Interests", name: "interests", type: "interests" })}</Fragment>
-                <div style={{ marginTop: 24 }}>
-                  <button type="button" onClick={handleUndo} style={buttonStyleUndo} disabled={saving}>
-                    Undo Changes
+              {/* Security */}
+              <section ref={securityRef} style={cardSectionStyle}>
+                <h2 style={sectionTitle}>Step 2: Security</h2>
+
+                {editingSection === "security" &&
+                  sectionFields.security
+                    .filter((f) => ["currentPassword", "password", "confirmPassword"].includes(f.name))
+                    .map((f) => <Fragment key={f.name}>{renderField(f)}</Fragment>)}
+
+                {editingSection === "security" ? (
+                  <div style={{ marginTop: 24 }}>
+                    <button type="button" onClick={handleUndo} style={buttonStyleUndo} disabled={saving}>
+                      Undo Changes
+                    </button>
+                    <button type="button" onClick={handleCancel} style={buttonStyleCancel} disabled={saving}>
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSave("security")}
+                      style={buttonStyleSave}
+                      disabled={saving}
+                    >
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditingSection("security")}
+                    style={buttonStyleEdit}
+                  >
+                    Edit
                   </button>
-                  <button type="button" onClick={handleCancel} style={buttonStyleCancel} disabled={saving}>
-                    Cancel
-                  </button>
-                  <button type="button" onClick={() => handleSave("profile")} style={buttonStyleSave} disabled={saving}>
-                    {saving ? "Saving…" : "Save"}
-                  </button>
+                )}
+              </section>
+
+              {/* Profile */}
+              <section ref={profileRef} style={cardSectionStyle}>
+                <h2 style={sectionTitle}>Step 3: Profile</h2>
+
+                <div style={{ marginBottom: 17 }}>
+                  <label
+                    style={{
+                      fontWeight: 700,
+                      color: THEME.goldTextColor,
+                      fontSize: 16,
+                      display: "block",
+                      marginBottom: 5,
+                    }}
+                  >
+                    Profile Image
+                  </label>
+                  <div>
+                    {editingSection === "profile" &&
+                    form.profilePic &&
+                    typeof form.profilePic === "object" ? (
+                      <img
+                        src={URL.createObjectURL(form.profilePic)}
+                        alt="Preview"
+                        width={98}
+                        style={{ borderRadius: 15, marginBottom: 7, background: "#111" }}
+                      />
+                    ) : (
+                      <img
+                        src={getProfileImageSrc(baseUser)}
+                        alt="Profile"
+                        width={98}
+                        style={{ borderRadius: 15, marginBottom: 7, background: "#111" }}
+                      />
+                    )}
+                  </div>
+                  {editingSection === "profile" && (
+                    <input
+                      type="file"
+                      name="profilePic"
+                      accept="image/*"
+                      onChange={handleChange}
+                      style={{ marginBottom: 10 }}
+                    />
+                  )}
                 </div>
-              </>
-            ) : (
-              <>
-                {/* Interests viewer */}
-                <Fragment key="interests-view">{renderField({ label: "Interests", name: "interests", type: "interests" })}</Fragment>
-                <button type="button" onClick={() => setEditingSection("profile")} style={buttonStyleEdit}>
-                  Edit
-                </button>
-              </>
-            )}
-          </section>
 
-          {/* Referral */}
-          <section ref={referralRef} style={cardSectionStyle}>
-            <h2 style={sectionTitle}>Step 4: Referral</h2>
+                {editingSection === "profile" ? (
+                  <>
+                    {/* Interests editor */}
+                    <Fragment key="interests">{renderField({ label: "Interests", name: "interests", type: "interests" })}</Fragment>
+                    <div style={{ marginTop: 24 }}>
+                      <button type="button" onClick={handleUndo} style={buttonStyleUndo} disabled={saving}>
+                        Undo Changes
+                      </button>
+                      <button type="button" onClick={handleCancel} style={buttonStyleCancel} disabled={saving}>
+                        Cancel
+                      </button>
+                      <button type="button" onClick={() => handleSave("profile")} style={buttonStyleSave} disabled={saving}>
+                        {saving ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Interests viewer */}
+                    <Fragment key="interests-view">{renderField({ label: "Interests", name: "interests", type: "interests" })}</Fragment>
+                    <button type="button" onClick={() => setEditingSection("profile")} style={buttonStyleEdit}>
+                      Edit
+                    </button>
+                  </>
+                )}
+              </section>
 
-            <div style={{ marginBottom: 18 }}>
-              <label style={{ fontWeight: 700 }}>Your Referral Code</label>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 5 }}>
-                <input
-                  type="text"
-                  value={form.referral || ""}
-                  readOnly
-                  style={{
-                    ...inputStyle,
-                    width: "60%",
-                    background: "#232326",
-                    color: THEME.goldTextColor,
-                    cursor: "copy",
-                  }}
-                  onFocus={(e) => e.target.select()}
-                />
-                <button
-                  type="button"
-                  style={{
-                    ...buttonStyleEdit,
-                    padding: "7px 13px",
-                    fontSize: "1rem",
-                    marginTop: 0,
-                    marginRight: 0,
-                  }}
-                  onClick={handleCopyCode}
-                  disabled={saving}
-                >
-                  Copy
-                </button>
-              </div>
-            </div>
+              {/* Referral */}
+              <section ref={referralRef} style={cardSectionStyle}>
+                <h2 style={sectionTitle}>Step 4: Referral</h2>
 
-            <div style={{ marginBottom: 18 }}>
-              <label style={{ fontWeight: 700 }}>Redeem a Code</label>
-              {editingSection === "referral" ? (
-                <input
-                  name="codeRedeem"
-                  value={form.codeRedeem}
-                  onChange={handleChange}
-                  style={inputStyle}
-                  autoComplete="off"
-                  placeholder="Enter a code"
-                />
-              ) : (
-                <span style={{ color: THEME.goldTextColor, marginLeft: 9 }}>
-                  {form.codeRedeem || <span style={{ color: "#aaa" }}>—</span>}
-                </span>
-              )}
-            </div>
+                <div style={{ marginBottom: 18 }}>
+                  <label style={{ fontWeight: 700 }}>Your Referral Code</label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 5 }}>
+                    <input
+                      type="text"
+                      value={form.referral || ""}
+                      readOnly
+                      style={{
+                        ...inputStyle,
+                        width: "60%",
+                        background: "#232326",
+                        color: THEME.goldTextColor,
+                        cursor: "copy",
+                      }}
+                      onFocus={(e) => e.target.select()}
+                    />
+                    <button
+                      type="button"
+                      style={{
+                        ...buttonStyleEdit,
+                        padding: "7px 13px",
+                        fontSize: "1rem",
+                        marginTop: 0,
+                        marginRight: 0,
+                      }}
+                      onClick={handleCopyCode}
+                      disabled={saving}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
 
-            {editingSection === "referral" ? (
-              <div style={{ marginTop: 24 }}>
-                <button type="button" onClick={handleUndo} style={buttonStyleUndo} disabled={saving}>
-                  Undo Changes
-                </button>
-                <button type="button" onClick={handleCancel} style={buttonStyleCancel} disabled={saving}>
-                  Cancel
-                </button>
-                <button type="button" onClick={() => handleSave("referral")} style={buttonStyleSave} disabled={saving}>
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-            ) : (
-              <button type="button" onClick={() => setEditingSection("referral")} style={buttonStyleEdit}>
-                Edit
-              </button>
-            )}
-          </section>
-        </form>
+                <div style={{ marginBottom: 18 }}>
+                  <label style={{ fontWeight: 700 }}>Redeem a Code</label>
+                  {editingSection === "referral" ? (
+                    <input
+                      name="codeRedeem"
+                      value={form.codeRedeem}
+                      onChange={handleChange}
+                      style={inputStyle}
+                      autoComplete="off"
+                      placeholder="Enter a code"
+                    />
+                  ) : (
+                    <span style={{ color: THEME.goldTextColor, marginLeft: 9 }}>
+                      {form.codeRedeem || <span style={{ color: "#aaa" }}>—</span>}
+                    </span>
+                  )}
+                </div>
+
+                {editingSection === "referral" ? (
+                  <div style={{ marginTop: 24 }}>
+                    <button type="button" onClick={handleUndo} style={buttonStyleUndo} disabled={saving}>
+                      Undo Changes
+                    </button>
+                    <button type="button" onClick={handleCancel} style={buttonStyleCancel} disabled={saving}>
+                      Cancel
+                    </button>
+                    <button type="button" onClick={() => handleSave("referral")} style={buttonStyleSave} disabled={saving}>
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => setEditingSection("referral")} style={buttonStyleEdit}>
+                    Edit
+                  </button>
+                )}
+              </section>
+            </form>
+          </div>
+        </div>
       </div>
     </div>
   );
