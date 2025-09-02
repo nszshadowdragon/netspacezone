@@ -25,6 +25,12 @@ async function patchImage({ ownerId, filename, body }) {
   if (!res.ok) throw new Error(await res.text().catch(() => "Failed to save"));
   try { return await res.json(); } catch { return null; }
 }
+async function deleteImageReq({ ownerId, filename }) {
+  const url = `${apiBase()}/api/gallery/${encodeURIComponent(filename)}?accountId=${encodeURIComponent(ownerId)}`;
+  const res = await fetch(url, { method: "DELETE", credentials: "include" });
+  if (!res.ok) throw new Error(await res.text().catch(() => "Failed to delete"));
+  return true;
+}
 
 /* ---------------- helpers ---------------- */
 const idOf = (im) => String(im?._id || im?.id || im?.filename || "");
@@ -354,6 +360,7 @@ export default function ImagePopupViewer({
   // 3-dot menu
   const [menuOpen, setMenuOpen] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const menuRef = useRef(null);
   useEffect(() => {
     const onDoc = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
@@ -375,6 +382,7 @@ export default function ImagePopupViewer({
     display: "block", width: "100%", textAlign: "left", padding: "10px 12px",
     color: "#ddd", background: "transparent", border: "none", cursor: "pointer",
   };
+  const itemDanger = { ...item, color: "#f87171" };
 
   /* ---------------- UI ---------------- */
   const [copied, setCopied] = useState(false);
@@ -386,6 +394,24 @@ export default function ImagePopupViewer({
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch {}
+  }
+
+  async function onDelete() {
+    if (!current || deleting) return;
+    const filename = current.filename || idOf(current);
+    const ok = window.confirm("Delete this image? This cannot be undone.");
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await deleteImageReq({ ownerId, filename });
+      // Close viewer; parent gallery will refresh via socket "gallery:image:deleted"
+      closePopup?.();
+    } catch (e) {
+      alert(`Delete failed: ${e?.message || e}`);
+    } finally {
+      setDeleting(false);
+      setMenuOpen(false);
+    }
   }
 
   return (
@@ -438,6 +464,9 @@ export default function ImagePopupViewer({
                   </button>
                   <button style={item} onClick={() => { setMenuOpen(false); copyShare(); }}>
                     {copied ? "✓ Link copied" : "🔗 Share link"}
+                  </button>
+                  <button style={itemDanger} onClick={onDelete} disabled={deleting}>
+                    {deleting ? "Deleting…" : "🗑 Delete image"}
                   </button>
                 </div>
               )}
