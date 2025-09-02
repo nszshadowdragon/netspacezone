@@ -13,8 +13,9 @@ const router = express.Router();
 
 /* ------------------------------ UPLOAD SETUP ------------------------------ */
 
-const uploadsDir = path.join(__dirname, "..", "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+// Use the same path that server.js serves (Render persistent disk). Fallback for local dev.
+const uploadsDir = process.env.UPLOAD_DIR || path.join(__dirname, "..", "uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
