@@ -86,6 +86,22 @@ export default function ImagePopupViewer({
   const prevExists = idx > 0;
   const nextExists = idx < images.length - 1;
 
+  // track mounted to avoid setState on unmount
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
+  // If images shrink (e.g., after delete) and idx is out of bounds, fix it or close viewer.
+  useEffect(() => {
+    if (idx >= images.length) {
+      if (images.length === 0) {
+        cleanUrlAndClose();
+      } else {
+        setIdx(images.length - 1);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [images.length]);
+
   // lock background scroll
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -93,28 +109,34 @@ export default function ImagePopupViewer({
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  // deep-link ?image=<id>, restore on unmount
+  // deep-link ?image=<id>, restore on unmount/close
   const initialUrlRef = useRef(typeof window !== "undefined" ? window.location.href : "");
   useEffect(() => {
     if (!current) return;
     const url = new URL(window.location.href);
     url.searchParams.set("image", idOf(current));
     window.history.replaceState({}, "", url.toString());
-    return () => {
-      try { const clean = new URL(initialUrlRef.current); window.history.replaceState({}, "", clean.toString()); } catch {}
-    };
   }, [current]);
+
+  function cleanUrlAndClose() {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("image");
+      window.history.replaceState({}, "", url.toString());
+    } catch {}
+    closePopup?.();
+  }
 
   // keyboard navigation
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); closePopup?.(); }
+      if (e.key === "Escape") { e.preventDefault(); cleanUrlAndClose(); }
       if (e.key === "ArrowLeft" && prevExists) { e.preventDefault(); setIdx((i) => Math.max(0, i - 1)); }
       if (e.key === "ArrowRight" && nextExists) { e.preventDefault(); setIdx((i) => Math.min(images.length - 1, i + 1)); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [prevExists, nextExists, closePopup, images.length]);
+  }, [prevExists, nextExists, images.length]);
 
   // preload neighbors
   useEffect(() => {
@@ -168,7 +190,6 @@ export default function ImagePopupViewer({
         }
       }
 
-      // optimistic
       optimisticUpdate({ ...current, likes: nextLikes, dislikes: nextDislikes, reactions: undefined });
 
       const saved = await patchImage({
@@ -181,7 +202,7 @@ export default function ImagePopupViewer({
     } catch {
       // optional: toast
     } finally {
-      setWorking(false);
+      if (mountedRef.current) setWorking(false);
     }
   }
 
@@ -199,7 +220,7 @@ export default function ImagePopupViewer({
     } catch {
       // optional: toast
     } finally {
-      setSaving(false);
+      if (mountedRef.current) setSaving(false);
     }
   }
 
@@ -228,9 +249,13 @@ export default function ImagePopupViewer({
     };
   }, [ownerId, current]);
 
-  if (!current) return null;
-  const src = buildSrc(current, fileHost);
+  if (!current) {
+    // If parent left us mounted for a tick with no current image, clean URL and close.
+    cleanUrlAndClose();
+    return null;
+  }
 
+  const src = buildSrc(current, fileHost);
   const ownerUser = current?.user || current?.owner || {};
   const ownerName = ownerUser?.username || ownerUser?.name || "User";
   const ownerAvatar = pickAvatar(ownerUser);
@@ -249,10 +274,12 @@ export default function ImagePopupViewer({
     paddingRight: `max(${GAP}px, env(safe-area-inset-right))`,
     paddingBottom: `max(${GAP}px, env(safe-area-inset-bottom))`,
     paddingLeft: `max(${GAP}px, env(safe-area-inset-left))`,
+    overflowY: "auto", // allow full scroll on mobile
   };
   const frame = {
     position: "relative",
     width: "min(1600px, 100%)",
+    // On mobile we let height be auto; see responsive CSS below
     height: "100%",
     border: "1px solid #2d2d2d",
     borderRadius: RADIUS,
@@ -265,8 +292,8 @@ export default function ImagePopupViewer({
   };
   const responsive = `
     @media (max-width: 980px) {
-      .iv-frame      { grid-template-columns: 1fr; }
-      .iv-meta       { width: 100%; max-height: 48vh; border-right: none; border-top: 1px solid #262626; }
+      .iv-frame      { grid-template-columns: 1fr; height: auto; max-height: 92vh; }
+      .iv-meta       { width: 100%; max-height: none; border-right: none; border-top: 1px solid #262626; }
       .iv-stageWrap  { order: -1; }
       .iv-navZone    { width: 72px; }
       .iv-countBadge { left: 10px !important; top: 10px !important; }
@@ -304,7 +331,7 @@ export default function ImagePopupViewer({
     color: "#eee", fontSize: 28, lineHeight: "42px", textAlign: "center", fontWeight: 900,
   };
 
-  // count badge — now inside the RIGHT pane (stageWrap) top-left
+  // count badge — inside RIGHT pane (stageWrap) top-left
   const countBadge = {
     position: "absolute",
     top: 8,
@@ -357,11 +384,13 @@ export default function ImagePopupViewer({
   const editRow = { display: "flex", gap: 8, marginTop: 8 };
   const editBtn = { border: "1px solid #2d2d2d", background: "#1a1a1a", color: ACCENT, borderRadius: 10, padding: "8px 12px", fontWeight: 800 };
 
-  // 3-dot menu
+  // 3-dot menu + delete confirm modal
   const [menuOpen, setMenuOpen] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const menuRef = useRef(null);
+
   useEffect(() => {
     const onDoc = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
     document.addEventListener("mousedown", onDoc);
@@ -396,32 +425,77 @@ export default function ImagePopupViewer({
     } catch {}
   }
 
-  async function onDelete() {
+  function openDeleteConfirm() {
+    setMenuOpen(false);
+    setConfirmOpen(true);
+  }
+
+  async function confirmDelete() {
     if (!current || deleting) return;
     const filename = current.filename || idOf(current);
-    const ok = window.confirm("Delete this image? This cannot be undone.");
-    if (!ok) return;
     setDeleting(true);
     try {
       await deleteImageReq({ ownerId, filename });
-      // Close viewer; parent gallery will refresh via socket "gallery:image:deleted"
-      closePopup?.();
+      setConfirmOpen(false);
+      cleanUrlAndClose(); // close viewer; list refreshes via socket
     } catch (e) {
+      setConfirmOpen(false);
       alert(`Delete failed: ${e?.message || e}`);
     } finally {
-      setDeleting(false);
-      setMenuOpen(false);
+      if (mountedRef.current) setDeleting(false);
     }
   }
 
+  function cancelDelete() {
+    setConfirmOpen(false);
+  }
+
+  // confirm modal styles
+  const modalOverlay = {
+    position: "fixed",
+    inset: 0,
+    zIndex: 10000,
+    background: "rgba(0,0,0,.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
+  };
+  const modalCard = {
+    width: "min(480px, 92vw)",
+    background: "#0b0b0b",
+    border: "1px solid #2d2d2d",
+    borderRadius: 14,
+    boxShadow: "0 10px 40px rgba(0,0,0,.55)",
+    padding: 16,
+    color: "#eee",
+  };
+  const modalTitle = { fontWeight: 900, color: "#fff", marginBottom: 8 };
+  const modalText = { color: "#bbb", marginBottom: 14 };
+  const modalRow = { display: "flex", gap: 10, justifyContent: "flex-end" };
+  const modalBtn = {
+    border: "1px solid #2d2d2d",
+    background: "#1a1a1a",
+    color: ACCENT,
+    borderRadius: 10,
+    padding: "8px 12px",
+    fontWeight: 800,
+  };
+  const modalBtnDanger = {
+    ...modalBtn,
+    background: "#3a0d0d",
+    borderColor: "#7f1d1d",
+    color: "#fca5a5",
+  };
+
   return (
-    <div role="dialog" aria-modal="true" style={overlay} onClick={(e) => { if (e.target === e.currentTarget) closePopup?.(); }}>
+    <div role="dialog" aria-modal="true" style={overlay} onClick={(e) => { if (e.target === e.currentTarget) cleanUrlAndClose(); }}>
       <style>{responsive}</style>
 
       <div className="iv-frame" style={frame} onClick={(e) => e.stopPropagation()}>
         {/* Close */}
         <div style={header}>
-          <button onClick={closePopup} style={closeBtn} aria-label="Close image">✕</button>
+          <button onClick={cleanUrlAndClose} style={closeBtn} aria-label="Close image">✕</button>
         </div>
 
         {/* LEFT: meta */}
@@ -465,8 +539,8 @@ export default function ImagePopupViewer({
                   <button style={item} onClick={() => { setMenuOpen(false); copyShare(); }}>
                     {copied ? "✓ Link copied" : "🔗 Share link"}
                   </button>
-                  <button style={itemDanger} onClick={onDelete} disabled={deleting}>
-                    {deleting ? "Deleting…" : "🗑 Delete image"}
+                  <button style={itemDanger} onClick={openDeleteConfirm} disabled={deleting}>
+                    🗑 Delete image
                   </button>
                 </div>
               )}
@@ -567,6 +641,30 @@ export default function ImagePopupViewer({
           </div>
         </div>
       </div>
+
+      {/* Site-styled confirm delete modal (centered) */}
+      {confirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={modalOverlay}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") cancelDelete();
+            if (e.key === "Enter")  confirmDelete();
+          }}
+        >
+          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={modalTitle}>Delete image?</div>
+            <div style={modalText}>This action cannot be undone.</div>
+            <div style={modalRow}>
+              <button style={modalBtn} onClick={cancelDelete} autoFocus>Cancel</button>
+              <button style={modalBtnDanger} onClick={confirmDelete} disabled={deleting}>
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
