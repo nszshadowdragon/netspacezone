@@ -1,524 +1,543 @@
 // frontend/src/components/ImagePopupViewer.jsx
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { FaTimes, FaChevronLeft, FaChevronRight, FaHeart, FaRegHeart, FaThumbsDown, FaRegThumbsDown, FaShare } from "react-icons/fa";
+import React, { useEffect, useRef, useState, useMemo } from "react";
+import socket, { connectSocket, joinGallery, leaveGallery } from "../socket";
 import { useAuth } from "../context/AuthContext";
 
-/* ---------------- API host (local vs prod, Vite-aware) ---------------- */
-const API_HOST = (() => {
-  try {
-    const env = (typeof import.meta !== "undefined" && import.meta.env) || {};
-    if (env.VITE_API_URL) return env.VITE_API_URL;
-    const h = window.location.hostname;
-    const isLocal = h === "localhost" || h === "127.0.0.1";
-    return isLocal ? "http://localhost:5000" : "https://api.netspacezone.com";
-  } catch {
-    return "http://localhost:5000";
-  }
-})();
+const ACCENT = "#ffe066";
+const HEADER_H = 56;
+const GAP = 12;
+const RADIUS = 14;
 
-const api = (path, opts = {}) =>
-  fetch(`${API_HOST}${path}`, { credentials: "include", ...opts });
-
-/* ---------------- Helpers ---------------- */
-function absImg(p) {
-  if (!p) return "";
-  if (/^https?:\/\//i.test(p)) return p;
-  if (p.startsWith("/uploads/")) return `${API_HOST}${p}`;
-  if (p.startsWith("/")) return p;
-  return `/${p}`;
+/* ---------------- env + api ---------------- */
+function apiBase() {
+  const env = (import.meta.env?.VITE_API_BASE || "").replace(/\/$/, "");
+  if (env) return env;
+  const h = window.location.hostname;
+  return h === "localhost" || h === "127.0.0.1" ? "http://localhost:5000" : "";
 }
-const getId = (im, fallback) => String(im?._id || im?.id || im?.filename || fallback || "");
-const getOwnerId = (im) =>
-  im?.ownerId || im?.accountId || im?.userId || im?.user?._id || im?.author?._id || "";
-const timeAgo = (dateLike) => {
-  if (!dateLike) return "";
-  const t = new Date(dateLike).getTime();
-  if (!t) return "";
+async function patchImage({ ownerId, filename, body }) {
+  const res = await fetch(`${apiBase()}/api/gallery/${encodeURIComponent(filename)}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId: ownerId, ...body }),
+  });
+  if (!res.ok) throw new Error(await res.text().catch(() => "Failed to save"));
+  try { return await res.json(); } catch { return null; }
+}
+
+/* ---------------- helpers ---------------- */
+const idOf = (im) => String(im?._id || im?.id || im?.filename || "");
+const valId = (v) => String(v?._id || v?.id || v || "");
+const timeago = (d) => {
+  if (!d) return "";
+  const t = new Date(d).getTime();
+  if (Number.isNaN(t)) return "";
   const s = Math.floor((Date.now() - t) / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d`;
-  const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo}mo`;
-  const y = Math.floor(mo / 12);
-  return `${y}y`;
+  const dd = Math.floor(h / 24);
+  if (dd < 7) return `${dd}d`;
+  return new Date(t).toLocaleString();
 };
-
-/* ---------------- Broadcast channel (soft real-time) ---------------- */
-function useBroadcast(name, onMessage) {
-  const ref = useRef(null);
-  useEffect(() => {
-    let ch = null;
-    try {
-      if ("BroadcastChannel" in window) {
-        ch = new BroadcastChannel(name);
-        ch.onmessage = (ev) => onMessage?.(ev.data);
-      }
-    } catch {}
-    ref.current = ch;
-    return () => {
-      try { ch?.close(); } catch {}
-    };
-  }, [name, onMessage]);
-  return ref;
+function buildSrc(x, host = "") {
+  if (!x) return "";
+  if (typeof x === "string") return x;
+  const p = x.path || x.url || x.src || x.filename || "";
+  if (/^https?:\/\//i.test(p)) return p;
+  if (p.startsWith?.("/uploads/")) return `${host}${p}`;
+  if (p.startsWith?.("/")) return p;
+  return `/${p}`;
+}
+function pickAvatar(u) {
+  if (!u) return "";
+  return (
+    u.profilePic || u.profileImage || u.avatar || u.avatarUrl ||
+    u.photoUrl || u.photoURL || u.picture || ""
+  );
+}
+function initialOf(name) {
+  return (name || "U").trim().charAt(0).toUpperCase();
 }
 
-/* =================================================================== */
+/* ---------------- component ---------------- */
 export default function ImagePopupViewer({
   images = [],
   popupIndex = 0,
   closePopup,
-  updateGalleryImage, // (updated) => void  (from parent)
+  updateGalleryImage,
+  ownerId,
+  fileHost = "",
 }) {
   const { user } = useAuth();
-  const [index, setIndex] = useState(Math.min(Math.max(0, popupIndex || 0), Math.max(0, images.length - 1)));
-  const [editingCaption, setEditingCaption] = useState(false);
-  const [captionDraft, setCaptionDraft] = useState("");
-  const [savingCaption, setSavingCaption] = useState(false);
-  const containerRef = useRef(null);
+  const meId = useMemo(() => valId(user), [user]);
 
-  const bc = useBroadcast("nsz:gallery", () => {
-    // parent list should refresh via other components;
-    // viewer itself stays focused on current image instance
-  });
+  const [idx, setIdx] = useState(Math.max(0, Math.min(popupIndex, images.length - 1)));
+  const current = images[idx] || null;
+  const prevExists = idx > 0;
+  const nextExists = idx < images.length - 1;
 
+  // lock background scroll
   useEffect(() => {
-    setIndex(Math.min(Math.max(0, popupIndex || 0), Math.max(0, images.length - 1)));
-  }, [popupIndex, images.length]);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
 
-  const im = images[index] || null;
-  const imageId = getId(im, index);
-  const ownerId = getOwnerId(im);
-  const canEdit = !!(user && ownerId && String(user._id) === String(ownerId));
-
-  // determine liked/disliked by the current user
-  const userId = user?._id;
-  const { likedByMe, dislikedByMe, likeCount, dislikeCount } = useMemo(() => {
-    let liked = false, disliked = false, likesN = 0, dislikesN = 0;
-
-    // common shapes:
-    // im.likes: number | string[] | {_id:string}[]
-    // im.dislikes: same
-    // im.reactions?: { likes:number, dislikes:number, by?:{likes:string[],dislikes:string[]} }
-    const L = im?.likes;
-    const D = im?.dislikes;
-    const R = im?.reactions;
-
-    if (typeof L === "number") likesN = L;
-    if (typeof D === "number") dislikesN = D;
-
-    if (Array.isArray(L)) {
-      likesN = L.length;
-      liked =
-        !!userId &&
-        (L.includes(userId) || L.some((x) => x?._id === userId || x === userId));
-    }
-    if (Array.isArray(D)) {
-      dislikesN = D.length;
-      disliked =
-        !!userId &&
-        (D.includes(userId) || D.some((x) => x?._id === userId || x === userId));
-    }
-    if (R && typeof R.likes === "number") likesN = R.likes;
-    if (R && typeof R.dislikes === "number") dislikesN = R.dislikes;
-    if (R?.by?.likes && userId) {
-      liked = R.by.likes.includes(userId);
-    }
-    if (R?.by?.dislikes && userId) {
-      disliked = R.by.dislikes.includes(userId);
-    }
-
-    return { likedByMe: liked, dislikedByMe: disliked, likeCount: likesN, dislikeCount: dislikesN };
-  }, [im, userId]);
-
-  // caption draft control
+  // deep-link ?image=<id>, restore on unmount
+  const initialUrlRef = useRef(typeof window !== "undefined" ? window.location.href : "");
   useEffect(() => {
-    setEditingCaption(false);
-    setCaptionDraft(im?.caption || "");
-  }, [imageId]);
+    if (!current) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("image", idOf(current));
+    window.history.replaceState({}, "", url.toString());
+    return () => {
+      try { const clean = new URL(initialUrlRef.current); window.history.replaceState({}, "", clean.toString()); } catch {}
+    };
+  }, [current]);
 
-  // keyboard controls
+  // keyboard navigation
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); closePopup?.(); }
-      if (e.key === "ArrowLeft") { e.preventDefault(); prev(); }
-      if (e.key === "ArrowRight") { e.preventDefault(); next(); }
+      if (e.key === "ArrowLeft" && prevExists) { e.preventDefault(); setIdx((i) => Math.max(0, i - 1)); }
+      if (e.key === "ArrowRight" && nextExists) { e.preventDefault(); setIdx((i) => Math.min(images.length - 1, i + 1)); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [index]);
+  }, [prevExists, nextExists, closePopup, images.length]);
 
-  const prev = () => setIndex((i) => Math.max(0, i - 1));
-  const next = () => setIndex((i) => Math.min(images.length - 1, i + 1));
-
-  /* ---------------- Like / Dislike ---------------- */
-  const patchLocalReactions = useCallback((liked, disliked) => {
-    // Create an updated image copy with adjusted counts/flags
-    const updated = { ...(im || {}) };
-
-    // Normalize counts
-    let likesN = likeCount;
-    let dislikesN = dislikeCount;
-
-    // Apply toggles:
-    if (liked) {
-      if (!likedByMe) likesN += 1;
-      if (dislikedByMe) dislikesN = Math.max(0, dislikesN - 1);
-    } else {
-      if (likedByMe) likesN = Math.max(0, likesN - 1);
-    }
-    if (disliked) {
-      if (!dislikedByMe) dislikesN += 1;
-      if (likedByMe) likesN = Math.max(0, likesN - 1);
-    } else {
-      if (dislikedByMe) dislikesN = Math.max(0, dislikesN - 1);
-    }
-
-    updated.reactions = {
-      ...(updated.reactions || {}),
-      likes: likesN,
-      dislikes: dislikesN,
+  // preload neighbors
+  useEffect(() => {
+    const preload = (i) => {
+      const im = images[i]; if (!im) return;
+      const s = buildSrc(im, fileHost); if (!s) return;
+      const pic = new Image(); pic.src = s;
     };
+    if (nextExists) preload(idx + 1);
+    if (prevExists) preload(idx - 1);
+  }, [idx, images, prevExists, nextExists, fileHost]);
 
-    // best-effort: reflect user sets
-    if (Array.isArray(updated.likes) || Array.isArray(updated.dislikes)) {
-      try {
-        if (Array.isArray(updated.likes)) {
-          const setL = new Set(updated.likes.map((x) => (x?._id || x)));
-          if (userId) {
-            liked ? setL.add(userId) : setL.delete(userId);
-          }
-          updated.likes = Array.from(setL);
+  // caption + reactions
+  const [editing, setEditing] = useState(false);
+  const [caption, setCaption] = useState(current?.caption || "");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setCaption(current?.caption || ""); setEditing(false); setSaving(false); }, [idx, current]);
+
+  const likesArr = Array.isArray(current?.likes) ? current.likes : [];
+  const dislikesArr = Array.isArray(current?.dislikes) ? current.dislikes : [];
+  const iLike = meId && likesArr.map(valId).includes(meId);
+  const iDislike = meId && dislikesArr.map(valId).includes(meId);
+
+  const [working, setWorking] = useState(false);
+  const optimisticUpdate = (next) => updateGalleryImage?.(next);
+
+  async function toggleReaction(kind) {
+    if (!current || working) return;
+    setWorking(true);
+    try {
+      const idMe = meId;
+      const curLikes = Array.isArray(current.likes) ? current.likes.map(valId) : [];
+      const curDislikes = Array.isArray(current.dislikes) ? current.dislikes.map(valId) : [];
+
+      let nextLikes = [...curLikes];
+      let nextDislikes = [...curDislikes];
+
+      if (kind === "like") {
+        if (nextLikes.includes(idMe)) {
+          nextLikes = nextLikes.filter((x) => x !== idMe);
+        } else {
+          nextLikes.push(idMe);
+          nextDislikes = nextDislikes.filter((x) => x !== idMe);
         }
-        if (Array.isArray(updated.dislikes)) {
-          const setD = new Set(updated.dislikes.map((x) => (x?._id || x)));
-          if (userId) {
-            disliked ? setD.add(userId) : setD.delete(userId);
-          }
-          updated.dislikes = Array.from(setD);
+      } else {
+        if (nextDislikes.includes(idMe)) {
+          nextDislikes = nextDislikes.filter((x) => x !== idMe);
+        } else {
+          nextDislikes.push(idMe);
+          nextLikes = nextLikes.filter((x) => x !== idMe);
         }
-      } catch {}
-    }
-
-    // push change upward
-    updateGalleryImage?.(updated);
-  }, [im, likeCount, dislikeCount, likedByMe, dislikedByMe, updateGalleryImage, userId]);
-
-  const toggleLike = async () => {
-    if (!imageId) return;
-    try {
-      // Try canonical route first; then fallbacks
-      let ok = false;
-      const routes = [
-        `/api/gallery/${encodeURIComponent(imageId)}/like`,
-        `/api/gallery/like?id=${encodeURIComponent(imageId)}`,
-        `/api/gallery/like/${encodeURIComponent(imageId)}`,
-      ];
-      for (const r of routes) {
-        const res = await api(r, { method: "POST" });
-        if (res.ok) { ok = true; break; }
-      }
-      if (ok) {
-        patchLocalReactions(!likedByMe, false);
-        try { bc.current?.postMessage?.({ type: "gallery:image:updated", ownerId: getOwnerId(im) }); } catch {}
-      }
-    } catch (e) {
-      /* swallow */
-    }
-  };
-
-  const toggleDislike = async () => {
-    if (!imageId) return;
-    try {
-      let ok = false;
-      const routes = [
-        `/api/gallery/${encodeURIComponent(imageId)}/dislike`,
-        `/api/gallery/dislike?id=${encodeURIComponent(imageId)}`,
-        `/api/gallery/dislike/${encodeURIComponent(imageId)}`,
-      ];
-      for (const r of routes) {
-        const res = await api(r, { method: "POST" });
-        if (res.ok) { ok = true; break; }
-      }
-      if (ok) {
-        patchLocalReactions(false, !dislikedByMe);
-        try { bc.current?.postMessage?.({ type: "gallery:image:updated", ownerId: getOwnerId(im) }); } catch {}
-      }
-    } catch (e) {
-      /* swallow */
-    }
-  };
-
-  /* ---------------- Caption edit (owner only) ---------------- */
-  const saveCaption = async () => {
-    if (!canEdit || !imageId) return;
-    if (savingCaption) return;
-    setSavingCaption(true);
-    try {
-      let ok = false, updated = null;
-      const payload = { caption: captionDraft || "" };
-
-      // canonical PATCH
-      try {
-        const r = await api(`/api/gallery/${encodeURIComponent(imageId)}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (r.ok) { ok = true; updated = await r.json().catch(() => null); }
-      } catch {}
-
-      // fallback route
-      if (!ok) {
-        const r = await api(`/api/gallery/update-caption`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: imageId, ...payload }),
-        });
-        if (r.ok) { ok = true; updated = await r.json().catch(() => null); }
       }
 
-      // update parent state
-      const merged = updated && (updated.image || updated);
-      updateGalleryImage?.(merged || { ...(im || {}), caption: captionDraft || "" });
-      setEditingCaption(false);
-      try { bc.current?.postMessage?.({ type: "gallery:image:updated", ownerId: getOwnerId(im) }); } catch {}
+      // optimistic
+      optimisticUpdate({ ...current, likes: nextLikes, dislikes: nextDislikes, reactions: undefined });
+
+      const saved = await patchImage({
+        ownerId,
+        filename: current.filename || idOf(current),
+        body: { likes: nextLikes, dislikes: nextDislikes },
+      });
+
+      if (saved) optimisticUpdate(saved);
     } catch {
-      // noop
+      // optional: toast
     } finally {
-      setSavingCaption(false);
+      setWorking(false);
     }
-  };
-
-  /* ---------------- Share link ---------------- */
-  const copyLink = async () => {
-    try {
-      const origin = window.location.origin || "";
-      const id = imageId;
-      const url = id ? `${origin}/image/${encodeURIComponent(id)}` : origin;
-      await navigator.clipboard.writeText(url);
-      flash("Link copied!");
-    } catch {
-      flash("Could not copy.");
-    }
-  };
-
-  /* ---------------- UI helpers ---------------- */
-  const [flashMsg, setFlashMsg] = useState("");
-  function flash(msg) {
-    setFlashMsg(msg);
-    window.clearTimeout(flash._t);
-    flash._t = window.setTimeout(() => setFlashMsg(""), 1600);
   }
 
-  if (!im) return null;
+  async function saveCaption() {
+    if (!current || saving) return;
+    setSaving(true);
+    try {
+      const saved = await patchImage({
+        ownerId,
+        filename: current.filename || idOf(current),
+        body: { caption: caption || "" },
+      });
+      if (saved) optimisticUpdate(saved);
+      setEditing(false);
+    } catch {
+      // optional: toast
+    } finally {
+      setSaving(false);
+    }
+  }
 
-  /* ---------------- Styles ---------------- */
-  const backdrop = {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 3000,
-  };
-  const wrap = {
-    position: "fixed", inset: "3% 2%", background: "#0a0a0a", border: "1px solid #2a2a2a",
-    borderRadius: 14, color: "#ffe066", zIndex: 3001, display: "grid",
-    gridTemplateColumns: "1fr 380px", gap: 0, overflow: "hidden",
-  };
-  const media = {
-    position: "relative", background: "#000", minHeight: 280,
-    display: "flex", alignItems: "center", justifyContent: "center",
-  };
-  const imgStyle = {
-    maxWidth: "100%", maxHeight: "86vh", objectFit: "contain",
-    display: "block",
-  };
-  const side = { borderLeft: "1px solid #262626", display: "flex", flexDirection: "column", minHeight: 0 };
-  const header = { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid #262626" };
-  const meta = { fontSize: 12, color: "#bbb" };
-  const controls = { display: "flex", gap: 10, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid #262626" };
-  const btn = { border: "1px solid #2d2d2d", background: "#141414", color: "#ffe066", borderRadius: 10, padding: "7px 10px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 800 };
-  const captionBox = { padding: "10px 12px", borderBottom: "1px solid #262626" };
-  const input = { width: "100%", background: "#0f0f0f", border: "1px solid #2d2d2d", color: "#ffe066", borderRadius: 8, padding: "8px 10px", outline: "none" };
-  const navBtn = {
-    position: "absolute", top: "50%", transform: "translateY(-50%)",
-    background: "rgba(0,0,0,.4)", border: "1px solid #3a3a3a", color: "#ffe066",
-    borderRadius: 999, height: 44, width: 44, display: "grid", placeItems: "center", cursor: "pointer",
-  };
-
-  // responsive: collapse side panel on small screens
-  const [narrow, setNarrow] = useState(false);
+  // realtime: gallery updates + presence
+  const [online, setOnline] = useState(false);
   useEffect(() => {
-    const onResize = () => setNarrow(window.innerWidth < 920);
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    connectSocket();
+    if (ownerId) joinGallery(String(ownerId));
+
+    const onGalleryUpdated = (evt) => {
+      const updated = evt?.payload || evt || null;
+      if (!updated) return;
+      if (idOf(updated) === idOf(current)) optimisticUpdate(updated);
+    };
+    const onPresence = (p) => {
+      if (p?.userId && ownerId && String(p.userId) === String(ownerId)) setOnline(!!p.online);
+    };
+
+    socket.on("gallery:image:updated", onGalleryUpdated);
+    socket.on("presence:update", onPresence);
+
+    return () => {
+      socket.off("gallery:image:updated", onGalleryUpdated);
+      socket.off("presence:update", onPresence);
+      if (ownerId) leaveGallery(String(ownerId));
+    };
+  }, [ownerId, current]);
+
+  if (!current) return null;
+  const src = buildSrc(current, fileHost);
+
+  const ownerUser = current?.user || current?.owner || {};
+  const ownerName = ownerUser?.username || ownerUser?.name || "User";
+  const ownerAvatar = pickAvatar(ownerUser);
+  const when = timeago(current?.createdAt);
+
+  /* ---------------- styles ---------------- */
+  const overlay = {
+    position: "fixed",
+    inset: 0,
+    zIndex: 9999,
+    background: "rgba(0,0,0,0.92)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: `max(${GAP}px, env(safe-area-inset-top))`,
+    paddingRight: `max(${GAP}px, env(safe-area-inset-right))`,
+    paddingBottom: `max(${GAP}px, env(safe-area-inset-bottom))`,
+    paddingLeft: `max(${GAP}px, env(safe-area-inset-left))`,
+  };
+  const frame = {
+    position: "relative",
+    width: "min(1600px, 100%)",
+    height: "100%",
+    border: "1px solid #2d2d2d",
+    borderRadius: RADIUS,
+    overflow: "hidden",
+    boxShadow: "0 10px 40px rgba(0,0,0,.55)",
+    background: "#050505",
+    display: "grid",
+    gridTemplateColumns: "380px 1fr",
+    columnGap: 12,
+  };
+  const responsive = `
+    @media (max-width: 980px) {
+      .iv-frame      { grid-template-columns: 1fr; }
+      .iv-meta       { width: 100%; max-height: 48vh; border-right: none; border-top: 1px solid #262626; }
+      .iv-stageWrap  { order: -1; }
+      .iv-navZone    { width: 72px; }
+      .iv-countBadge { left: 10px !important; top: 10px !important; }
+    }
+  `;
+  const header = {
+    position: "absolute", top: 8, right: 8, height: HEADER_H,
+    display: "flex", alignItems: "center", justifyContent: "flex-end",
+    pointerEvents: "none",
+  };
+  const closeBtn = {
+    pointerEvents: "auto",
+    border: "1px solid #2d2d2d",
+    background: "rgba(0,0,0,.55)",
+    color: "#eee",
+    borderRadius: 10,
+    padding: "8px 12px",
+    fontWeight: 800,
+  };
+
+  // RIGHT: image stage
+  const stageWrap = { position: "relative", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" };
+  const stage = { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" };
+  const media = { maxWidth: "100%", maxHeight: `calc(100% - ${HEADER_H}px)`, objectFit: "contain", display: "block" };
+  const navZone = (side) => ({
+    position: "absolute", top: 0, bottom: 0, [side]: 0, width: 96,
+    display: "flex", alignItems: "center", justifyContent: side === "left" ? "flex-start" : "flex-end",
+    padding: "0 10px", cursor: "pointer",
+    background: `linear-gradient(${side === "left" ? "to right" : "to left"}, rgba(0,0,0,.35), transparent)`,
+    userSelect: "none",
+  });
+  const navBtn = {
+    width: 44, height: 44, borderRadius: "9999px",
+    border: "1px solid #2d2d2d", background: "rgba(0,0,0,.55)",
+    color: "#eee", fontSize: 28, lineHeight: "42px", textAlign: "center", fontWeight: 900,
+  };
+
+  // count badge — now inside the RIGHT pane (stageWrap) top-left
+  const countBadge = {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    zIndex: 2,
+    border: "1px solid #2d2d2d",
+    background: "rgba(0,0,0,.55)",
+    color: "#ddd",
+    borderRadius: 10,
+    padding: "6px 10px",
+    fontWeight: 800,
+    pointerEvents: "none",
+  };
+
+  // LEFT: details/meta (VERTICAL ONLY; no horizontal scroll)
+  const side = {
+    position: "relative",
+    width: 380,
+    padding: "14px",
+    color: "#ddd",
+    overflowY: "auto",
+    overflowX: "hidden",
+    borderRight: "1px solid #262626",
+    overscrollBehavior: "contain",
+  };
+  const topRow = {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    gap: 8, marginBottom: 8,
+  };
+  const userWrap = { display: "flex", alignItems: "center", gap: 10, minWidth: 0 };
+  const avatarStyle = {
+    width: 36, height: 36, borderRadius: "9999px", background: "#111",
+    border: "1px solid #2d2d2d", overflow: "hidden", display: "grid", placeItems: "center",
+    color: "#ccc", fontWeight: 900,
+  };
+  const dot = (on) => ({ width: 8, height: 8, borderRadius: 9999, background: on ? "#16a34a" : "#555", boxShadow: on ? "0 0 8px rgba(22,163,74,.7)" : "none" });
+  const userName = { fontWeight: 900, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+  const sub = { opacity: 0.75, fontSize: 12 };
+  const divider = { borderTop: "1px solid #262626", margin: "10px 0" };
+
+  const iconBtn = (active) => ({
+    display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer",
+    border: "1px solid #2d2d2d", background: "#121212",
+    color: active ? ACCENT : "#bbb", borderRadius: 10, padding: "6px 10px", fontWeight: 800,
+  });
+  const countsRow = { display: "flex", gap: 10, alignItems: "center", marginTop: 10 };
+
+  const captionBox = { whiteSpace: "pre-wrap", lineHeight: 1.45, overflowWrap: "anywhere", wordBreak: "break-word", marginTop: 10 };
+  const editArea = { width: "100%", minHeight: 80, resize: "vertical", background: "#0e0e0e", color: "#eee", border: "1px solid #2d2d2d", borderRadius: 10, padding: 10 };
+  const editRow = { display: "flex", gap: 8, marginTop: 8 };
+  const editBtn = { border: "1px solid #2d2d2d", background: "#1a1a1a", color: ACCENT, borderRadius: 10, padding: "8px 12px", fontWeight: 800 };
+
+  // 3-dot menu
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const menuRef = useRef(null);
+  useEffect(() => {
+    const onDoc = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
+  const actionsIconBtn = {
+    width: 36, height: 32, display: "grid", placeItems: "center",
+    border: "1px solid #2d2d2d", background: "#121212", color: ACCENT,
+    borderRadius: 8, fontSize: 18, lineHeight: 1,
+  };
+  const menu = {
+    position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 20,
+    background: "#0b0b0b", border: "1px solid #262626", borderRadius: 10, minWidth: 220,
+    boxShadow: "0 8px 24px rgba(0,0,0,.5)", overflow: "hidden",
+  };
+  const item = {
+    display: "block", width: "100%", textAlign: "left", padding: "10px 12px",
+    color: "#ddd", background: "transparent", border: "none", cursor: "pointer",
+  };
+
+  /* ---------------- UI ---------------- */
+  const [copied, setCopied] = useState(false);
+  async function copyShare() {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("image", idOf(current));
+      await navigator.clipboard.writeText(url.toString());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  }
+
   return (
-    <>
-      {/* Backdrop click closes */}
-      <div style={backdrop} onClick={() => closePopup?.()} />
-      {/* Main card */}
-      <div
-        ref={containerRef}
-        style={{ ...wrap, gridTemplateColumns: narrow ? "1fr" : "1fr 380px" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* LEFT: Image + nav arrows */}
-        <div style={media}>
-          {index > 0 && (
-            <button
-              aria-label="Previous"
-              style={{ ...navBtn, left: 10 }}
-              onClick={prev}
-            >
-              <FaChevronLeft />
-            </button>
-          )}
-          <img
-            src={absImg(im.path || im.url || im.src || im.filename)}
-            alt={im.caption || ""}
-            style={imgStyle}
-            onError={(e) => { e.currentTarget.style.opacity = .5; }}
-          />
-          {index < images.length - 1 && (
-            <button
-              aria-label="Next"
-              style={{ ...navBtn, right: 10 }}
-              onClick={next}
-            >
-              <FaChevronRight />
-            </button>
-          )}
+    <div role="dialog" aria-modal="true" style={overlay} onClick={(e) => { if (e.target === e.currentTarget) closePopup?.(); }}>
+      <style>{responsive}</style>
+
+      <div className="iv-frame" style={frame} onClick={(e) => e.stopPropagation()}>
+        {/* Close */}
+        <div style={header}>
+          <button onClick={closePopup} style={closeBtn} aria-label="Close image">✕</button>
         </div>
 
-        {/* RIGHT: Details, actions */}
-        {!narrow && (
-          <div style={side}>
-            {/* Header */}
-            <div style={header}>
-              <div>
-                <div style={{ fontWeight: 900 }}>
-                  {im?.author?.username || im?.user?.username || im?.username || "User"}
-                </div>
-                <div style={meta}>
-                  {timeAgo(im?.createdAt)} • {String(im?.width || "")}{im?.width ? "×" : ""}{String(im?.height || "")}
-                </div>
+        {/* LEFT: meta */}
+        <aside className="iv-meta" style={side}>
+          <div style={topRow}>
+            <div style={userWrap}>
+              <div style={avatarStyle}>
+                {ownerAvatar ? (
+                  <img src={ownerAvatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  <span>{initialOf(ownerName)}</span>
+                )}
               </div>
-              <button aria-label="Close" onClick={() => closePopup?.()} style={btn}>
-                <FaTimes />
-              </button>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={userName}>{ownerName}</span>
+                  <span style={dot(online)} />
+                </div>
+                <div style={sub}>{when}</div>
+              </div>
             </div>
 
-            {/* Controls */}
-            <div style={controls}>
+            <div ref={menuRef} style={{ position: "relative" }}>
               <button
-                type="button"
-                onClick={toggleLike}
-                style={{ ...btn, borderColor: likedByMe ? "#16ff80" : "#2d2d2d" }}
-                title={likedByMe ? "Unlike" : "Like"}
+                style={actionsIconBtn}
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-label="More actions"
               >
-                {likedByMe ? <FaHeart /> : <FaRegHeart />} {likeCount}
+                ⋯
               </button>
-
-              <button
-                type="button"
-                onClick={toggleDislike}
-                style={{ ...btn, borderColor: dislikedByMe ? "#ff7676" : "#2d2d2d" }}
-                title={dislikedByMe ? "Remove dislike" : "Dislike"}
-              >
-                {dislikedByMe ? <FaThumbsDown /> : <FaRegThumbsDown />} {dislikeCount}
-              </button>
-
-              <button type="button" onClick={copyLink} style={btn} title="Copy link">
-                <FaShare /> Share
-              </button>
-            </div>
-
-            {/* Caption */}
-            <div style={captionBox}>
-              {!editingCaption && (
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ color: "#ddd", lineHeight: 1.4 }}>
-                    {im?.caption ? im.caption : <span style={{ color: "#888" }}>No caption</span>}
-                  </div>
-                  {canEdit && (
-                    <button
-                      type="button"
-                      onClick={() => { setCaptionDraft(im?.caption || ""); setEditingCaption(true); }}
-                      style={btn}
-                    >
-                      Edit
+              {menuOpen && (
+                <div style={menu}>
+                  {!editing && (
+                    <button style={item} onClick={() => { setMenuOpen(false); setEditing(true); }}>
+                      ✎ Edit caption
                     </button>
                   )}
+                  <button style={item} onClick={() => { setMenuOpen(false); setShowInfo((v) => !v); }}>
+                    {showInfo ? "Hide info" : "Show info"}
+                  </button>
+                  <button style={item} onClick={() => { setMenuOpen(false); copyShare(); }}>
+                    {copied ? "✓ Link copied" : "🔗 Share link"}
+                  </button>
                 </div>
               )}
-              {editingCaption && canEdit && (
-                <div>
-                  <textarea
-                    rows={3}
-                    value={captionDraft}
-                    onChange={(e) => setCaptionDraft(e.target.value)}
-                    style={{ ...input, resize: "vertical" }}
-                    placeholder="Write a caption…"
-                  />
-                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                    <button
-                      type="button"
-                      onClick={saveCaption}
-                      style={{ ...btn, background: savingCaption ? "#164e3b" : "#0f2", color: "#111", borderColor: "#0f2" }}
-                      disabled={savingCaption}
-                    >
-                      {savingCaption ? "Saving…" : "Save"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setEditingCaption(false); setCaptionDraft(im?.caption || ""); }}
-                      style={btn}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Comments placeholder */}
-            <div style={{ padding: "10px 12px" }}>
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>Comments</div>
-              <div style={{ color: "#aaa" }}>Comments will be available soon.</div>
-            </div>
-
-            {/* Footer meta */}
-            <div style={{ marginTop: "auto", padding: "10px 12px", borderTop: "1px solid #262626", color: "#999", fontSize: 12 }}>
-              ID: {imageId}
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Tiny toast */}
-      {flashMsg && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: 16,
-            left: "50%",
-            transform: "translateX(-50%)",
-            padding: "8px 12px",
-            borderRadius: 10,
-            background: "#064e3b",
-            border: "1px solid #16ff80",
-            color: "#fff",
-            fontWeight: 800,
-            zIndex: 4000,
-          }}
-        >
-          {flashMsg}
+          <div style={divider} />
+
+          {/* Info panel (appears ABOVE caption when toggled) */}
+          {showInfo && (
+            <div style={{ fontSize: 13, color: "#aaa", marginBottom: 8, overflowWrap: "anywhere", wordBreak: "break-word" }}>
+              {current?.filename && <div><strong>File:</strong> {current.filename}</div>}
+              {current?.createdAt && <div><strong>Uploaded:</strong> {new Date(current.createdAt).toLocaleString()}</div>}
+            </div>
+          )}
+
+          {/* Caption */}
+          {!editing ? (
+            <div style={captionBox}>{current?.caption || <span style={{ opacity: 0.6 }}>No caption</span>}</div>
+          ) : (
+            <>
+              <textarea
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                placeholder="Write a caption…"
+                style={editArea}
+              />
+              <div style={editRow}>
+                <button style={editBtn} onClick={saveCaption} disabled={saving}>
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                <button style={editBtn} onClick={() => { setCaption(current?.caption || ""); setEditing(false); }} disabled={saving}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Reactions: icon buttons */}
+          <div style={countsRow}>
+            <button
+              style={iconBtn(iLike)}
+              onClick={() => toggleReaction("like")}
+              aria-pressed={iLike}
+              title={iLike ? "Unlike" : "Like"}
+            >
+              👍 <span>{likesArr.length}</span>
+            </button>
+            <button
+              style={iconBtn(iDislike)}
+              onClick={() => toggleReaction("dislike")}
+              aria-pressed={iDislike}
+              title={iDislike ? "Undo dislike" : "Dislike"}
+            >
+              👎 <span>{dislikesArr.length}</span>
+            </button>
+          </div>
+
+          <div style={divider} />
+
+          {/* Comments placeholder */}
+          <div style={{ padding: "10px 0", color: "#aaa", fontStyle: "italic" }}>
+            💬 Comments coming soon
+          </div>
+        </aside>
+
+        {/* RIGHT: image stage */}
+        <div className="iv-stageWrap" style={stageWrap}>
+          {/* Image count badge is now inside the right pane */}
+          <div className="iv-countBadge" style={countBadge}>
+            {images.length ? `${idx + 1} / ${images.length}` : ""}
+          </div>
+
+          <div className="iv-stage" style={stage}>
+            {prevExists && (
+              <div
+                className="iv-navZone"
+                style={navZone("left")}
+                onClick={() => setIdx((i) => Math.max(0, i - 1))}
+                aria-label="Previous image"
+              >
+                <div style={navBtn}>‹</div>
+              </div>
+            )}
+
+            <img src={src} alt={current?.caption || ""} style={media} />
+
+            {nextExists && (
+              <div
+                className="iv-navZone"
+                style={navZone("right")}
+                onClick={() => setIdx((i) => Math.min(images.length - 1, i + 1))}
+                aria-label="Next image"
+              >
+                <div style={navBtn}>›</div>
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </>
+      </div>
+    </div>
   );
 }

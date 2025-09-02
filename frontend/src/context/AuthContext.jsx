@@ -1,6 +1,13 @@
 // frontend/src/context/AuthContext.jsx
-import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
-import { connectSocket, disconnectSocket } from "../socket";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
+import socket, { connectSocket, disconnectSocket } from "../socket";
 
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
@@ -24,6 +31,8 @@ function extractToken(obj) {
   if (!obj) return null;
   return obj.token ?? obj.accessToken ?? obj.data?.token ?? obj.data?.accessToken ?? null;
 }
+const userIdOf = (u) => (u && (u._id || u.id)) || null;
+const usernameOf = (u) => u?.username || u?.name || u?.handle || "User";
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -108,13 +117,41 @@ export function AuthProvider({ children }) {
   }, []);
 
   // ---- socket lifecycle: connect when authed, disconnect otherwise ----
+  // Also: join/leave presence so others can see this user online.
   useEffect(() => {
-    if (!loading && user) {
-      connectSocket();   // single connect (singleton in src/socket.js)
+    if (loading) return;
+
+    const uid = userIdOf(user);
+    const uname = usernameOf(user);
+
+    if (uid) {
+      connectSocket();
+
+      const joinPresence = () => {
+        try {
+          socket.emit("presence:join", { userId: String(uid), username: uname });
+        } catch {}
+      };
+      // join now + on reconnect
+      joinPresence();
+      socket.on("connect", joinPresence);
+
+      const beforeUnload = () => {
+        try { socket.emit("presence:leave"); } catch {}
+      };
+      window.addEventListener("beforeunload", beforeUnload);
+
+      return () => {
+        // cleanup on logout/user change/unmount
+        try { socket.emit("presence:leave"); } catch {}
+        socket.off("connect", joinPresence);
+        window.removeEventListener("beforeunload", beforeUnload);
+      };
     } else {
+      // no user -> ensure socket is closed
       disconnectSocket();
     }
-  }, [loading, user]);
+  }, [loading, user && userIdOf(user)]);
 
   const value = useMemo(
     () => ({
