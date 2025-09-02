@@ -9,23 +9,21 @@ import { DragDropContext, Droppable, Draggable } from "react-beautiful-dnd";
 import { FaFolder, FaEye, FaUpload } from "react-icons/fa";
 import socket, { connectSocket, joinGallery, leaveGallery } from "../socket";
 
-/** API base + file host selection */
-const { API_BASE, FILE_HOST, HOST_TAG } = (() => {
-  const env = (typeof import.meta !== "undefined" && import.meta.env) || {};
-  const explicit = (env.VITE_API_URL || "").replace(/\/$/, "");
-  const isLocal = (() => {
-    try { const h = window.location.hostname; return h === "localhost" || h === "127.0.0.1"; }
-    catch { return true; }
-  })();
-  return {
-    API_BASE: explicit || "",
-    FILE_HOST: explicit || (isLocal ? "http://localhost:5000" : ""),
-    HOST_TAG: explicit ? explicit : "dev",
-  };
+/* -------------------- API base + file host (with prod fallback) -------------------- */
+const env = (typeof import.meta !== "undefined" && import.meta.env) || {};
+const isLocal = (() => {
+  try { const h = window.location.hostname; return h === "localhost" || h === "127.0.0.1"; }
+  catch { return true; }
 })();
-const api = (path, opts = {}) => fetch(`${API_BASE}${path}`, { credentials: "include", ...opts });
+const API_FALLBACK = isLocal ? "" : "https://api.netspacezone.com";
+const API_BASE = (env.VITE_API_BASE || API_FALLBACK).replace(/\/$/, "");
+const FILE_HOST = API_BASE || (isLocal ? "http://localhost:5000" : "https://api.netspacezone.com");
+const HOST_TAG  = API_BASE || (isLocal ? "dev" : "prod");
 
-/** helpers */
+const api = (path, opts = {}) =>
+  fetch(`${API_BASE}${path}`, { credentials: "include", ...opts });
+
+/* -------------------- helpers -------------------- */
 function imgSrc(pathOrObj) {
   let p = pathOrObj;
   if (!p) return "";
@@ -39,76 +37,46 @@ function useBroadcast(channelName, onMessage) {
   const ref = useRef(null);
   useEffect(() => {
     let ch = null;
-    try { if ("BroadcastChannel" in window) { ch = new BroadcastChannel(channelName); ch.onmessage = (ev) => onMessage?.(ev.data); } } catch {}
+    try {
+      if ("BroadcastChannel" in window) {
+        ch = new BroadcastChannel(channelName);
+        ch.onmessage = (ev) => onMessage?.(ev.data);
+      }
+    } catch {}
     ref.current = ch;
     return () => { try { ch?.close(); } catch {} };
   }, [channelName, onMessage]);
   return ref;
 }
+const idOf = (im) => String(im?._id || im?.id || im?.filename || "");
 
-/** endpoint discovery candidates */
-const CANDIDATES = {
-  list: (ownerId) => [
-    `/api/gallery?accountId=${ownerId}`,
-    `/api/gallery/images?accountId=${ownerId}`,
-    `/api/images?accountId=${ownerId}`,
-    `/api/photos?accountId=${ownerId}`,
-    `/api/users/${ownerId}/gallery`,
-    `/api/user/${ownerId}/gallery`,
-  ],
-  folders: (ownerId) => [
-    `/api/gallery/folders?accountId=${ownerId}`,
-    `/api/folders?scope=gallery&accountId=${ownerId}`,
-    `/api/users/${ownerId}/gallery/folders`,
-  ],
-  upload: [
-    { path: `/api/gallery`, field: "image" },
-    { path: `/api/gallery/upload`, field: "image" },
-    { path: `/api/images`, field: "image" },
-    { path: `/api/media/upload`, field: "image" },
-    { path: `/api/upload`, field: "image" },
-    { path: `/gallery`, field: "image" },
-  ],
-  del: (id, ownerId) => [
-    `/api/gallery/${encodeURIComponent(id)}?accountId=${ownerId}`,
-    `/api/images/${encodeURIComponent(id)}?accountId=${ownerId}`,
-    `/api/media/${encodeURIComponent(id)}?accountId=${ownerId}`,
-  ],
-  reorder: [`/api/gallery/reorder`, `/api/images/reorder`],
-  bulkDelete: [`/api/gallery/bulk-delete`, `/api/images/bulk-delete`],
+/* -------------------- canonical endpoints only -------------------- */
+const ENDPOINTS = {
+  list:     (ownerId) => `/api/gallery?accountId=${ownerId}`,
+  folders:  (ownerId) => `/api/gallery/folders?accountId=${ownerId}`,
+  upload:   [{ path: `/api/gallery`, field: "image" }], // multipart POST
+  del:      (id, ownerId) => `/api/gallery/${encodeURIComponent(id)}?accountId=${ownerId}`,
+  reorder:  `/api/gallery/reorder`,
 };
+
 async function toJsonSafe(res) { try { return await res.json(); } catch { return null; } }
-async function findListEndpoint(ownerId) {
-  for (const url of CANDIDATES.list(ownerId)) {
-    try { const r = await api(url); if (!r.ok) continue; const j = await toJsonSafe(r);
-      if (Array.isArray(j) || Array.isArray(j?.images)) return { url, json: j }; } catch {}
-  }
-  return null;
-}
-async function findFoldersEndpoint(ownerId) {
-  for (const url of CANDIDATES.folders(ownerId)) {
-    try { const r = await api(url); if (!r.ok) continue; const j = await toJsonSafe(r);
-      if (Array.isArray(j) || Array.isArray(j?.folders)) return { url, json: j }; } catch {}
-  }
-  return null;
-}
 function cacheKey(ownerId) { return `nsz.gallery.ep.${HOST_TAG}.${ownerId}`; }
+
+/** Keep a tiny “discovery” cache (URLs are fixed now, but this preserves your shape) */
 async function discoverEndpoints(ownerId) {
   const cachedRaw = localStorage.getItem(cacheKey(ownerId));
   if (cachedRaw) { try { const cached = JSON.parse(cachedRaw); if (cached?.list) return cached; } catch {} }
-  const list = await findListEndpoint(ownerId);
-  const folders = await findFoldersEndpoint(ownerId);
   const ep = {
-    list: list?.url || null,
-    folders: folders?.url || null,
-    upload: CANDIDATES.upload,
-    bulkDelete: CANDIDATES.bulkDelete,
-    reorder: CANDIDATES.reorder,
-    del: CANDIDATES.del,
+    list: ENDPOINTS.list(ownerId),
+    folders: ENDPOINTS.folders(ownerId),
+    upload: ENDPOINTS.upload,
+    del: ENDPOINTS.del,
+    reorder: ENDPOINTS.reorder,
   };
   localStorage.setItem(cacheKey(ownerId), JSON.stringify(ep));
   return ep;
 }
+
 async function tryUpload(epUpload, file, ownerId, folder) {
   let lastError = "";
   for (const { path, field } of epUpload) {
@@ -117,19 +85,36 @@ async function tryUpload(epUpload, file, ownerId, folder) {
       fd.append(field, file, file.name);
       fd.append("accountId", ownerId);
       if (folder && folder !== "All") fd.append("folder", folder);
-      const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: fd, credentials: "include" });
+
+      const res = await fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        body: fd,
+        credentials: "include",
+      });
       if (res.ok) return await toJsonSafe(res);
+
       const text = await res.text().catch(() => "");
       lastError = `${res.status} ${res.statusText} @ ${API_BASE || ""}${path} — ${text.slice(0, 200)}`;
-    } catch (e) { lastError = String(e?.message || e); }
+    } catch (e) {
+      lastError = String(e?.message || e);
+    }
   }
-  throw new Error(lastError || "Upload failed (no candidate endpoints matched).");
+  throw new Error(lastError || "Upload failed.");
 }
 
-/** component */
-export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditProp, initialFolder = "All" }) {
+/* -------------------- component -------------------- */
+export default function ImageGallery({
+  profileUser,
+  ownerId: ownerIdProp,
+  canEdit: canEditProp,
+  initialFolder = "All",
+}) {
   const { user } = useAuth();
-  const ownerId = ownerIdProp || user?._id || "";
+  const ownerId =
+    ownerIdProp ||
+    profileUser?._id || profileUser?.id ||
+    user?._id || "";
+
   const isOwner = !!(canEditProp ?? (user && String(user._id) === String(ownerId)));
 
   const [folders, setFolders] = useState(["All"]);
@@ -146,9 +131,11 @@ export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditPro
   const clearBanner = () => setBanner({ type: "", msg: "" });
 
   const [ep, setEp] = useState(null);
-  const bc = useBroadcast("nsz:gallery", (msg) => { if (msg?.type?.startsWith("gallery:") && msg.ownerId === ownerId) refreshAll(); });
+  const bc = useBroadcast("nsz:gallery", (msg) => {
+    if (msg?.type?.startsWith("gallery:") && msg.ownerId === ownerId) refreshAll();
+  });
 
-  // discover endpoints once per owner
+  // discover (writes fixed endpoints to cache); then load
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -175,18 +162,18 @@ export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditPro
     };
     const onDeleted = (evt) => {
       const img = evt?.payload || evt;
-      const id = String(img?._id || img?.id || "");
+      const id = idOf(img);
       if (!id) return refreshAll();
-      setImages((curr) => curr.filter((i) => String(i._id || i.id) !== id));
+      setImages((curr) => curr.filter((i) => idOf(i) !== id));
     };
     const onUpdated = (evt) => {
       const updated = evt?.payload || evt;
       if (!updated) return refreshAll();
-      const id = String(updated._id || updated.id);
+      const id = idOf(updated);
       setImages((curr) => {
         let found = false;
         const next = curr.map((im) => {
-          if (String(im._id || im.id) === id) { found = true; return { ...im, ...updated }; }
+          if (idOf(im) === id) { found = true; return { ...im, ...updated }; }
           return im;
         });
         return found ? next : [updated, ...next];
@@ -213,31 +200,31 @@ export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditPro
     setLoading(true);
     clearBanner();
     try {
-      if (ep.folders) {
-        try {
-          const rf = await api(ep.folders);
-          if (rf.ok) {
-            const j = await toJsonSafe(rf);
-            const arr = Array.isArray(j) ? j : (Array.isArray(j?.folders) ? j.folders : []);
-            setFolders(["All", ...arr.filter((f) => f && f !== "All")]);
-          } else {
-            setFolders((f) => f.length ? f : ["All"]);
-          }
-        } catch {
+      // folders
+      try {
+        const rf = await api(ep.folders);
+        if (rf.ok) {
+          const j = await toJsonSafe(rf);
+          const arr = Array.isArray(j) ? j : (Array.isArray(j?.folders) ? j.folders : []);
+          const extras = (arr || [])
+            .filter((f) => f && f !== "All" && String(f).toLowerCase() !== "root");
+          setFolders(["All", ...Array.from(new Set(extras))]);
+        } else {
           setFolders((f) => f.length ? f : ["All"]);
         }
-      } else {
+      } catch {
         setFolders((f) => f.length ? f : ["All"]);
       }
 
+      // images
       let imgs = [];
-      if (ep.list) {
+      try {
         const ri = await api(ep.list);
         if (ri.ok) {
           const j = await toJsonSafe(ri);
           imgs = Array.isArray(j) ? j : (Array.isArray(j?.images) ? j.images : []);
         }
-      }
+      } catch {}
       setImages((Array.isArray(imgs) ? imgs : []).map((im) => ({ ...im, folder: im.folder || "All" })));
     } catch (e) {
       console.error("gallery refresh error", e);
@@ -254,7 +241,10 @@ export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditPro
     showBanner("info", `Uploading ${acceptedFiles.length} file(s)…`);
     try {
       for (const file of acceptedFiles) {
-        if (file.size > 20 * 1024 * 1024) { showBanner("error", `Rejected ${file.name}: over 20MB`); return; }
+        if (file.size > 20 * 1024 * 1024) {
+          showBanner("error", `Rejected ${file.name}: over 20MB`);
+          return;
+        }
         await tryUpload(ep.upload, file, ownerId, selectedFolder);
       }
       showBanner("success", "Upload complete ✔");
@@ -277,27 +267,36 @@ export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditPro
     disabled: !isOwner || !ownerId,
   });
 
-  /** order persistence */
+  /** order persistence (visible subset only) */
   async function persistReorder(newOrder) {
     if (!ep) return;
-    let ok = false, lastErr = "";
-    for (const url of CANDIDATES.reorder) {
-      try {
-        const res = await api(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accountId: ownerId, order: newOrder }),
-        });
-        if (res.ok) { ok = true; break; }
-        lastErr = `${res.status} ${res.statusText}`;
-      } catch (e) { lastErr = String(e?.message || e); }
+    try {
+      const res = await api(ep.reorder, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: ownerId, order: newOrder }),
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        showBanner("error", `Could not save order (${res.status}) ${t.slice(0, 120)}`);
+      } else {
+        setTimeout(() => clearBanner(), 2000);
+      }
+    } catch (e) {
+      showBanner("error", `Could not save order (${String(e?.message || e)})`);
     }
-    if (!ok) showBanner("error", `Could not save order (${lastErr}).`);
-    else setTimeout(() => clearBanner(), 2000);
   }
 
-  /** filtered list */
+  /** responsive grid + filtered list */
   const [cols, setCols] = useState(4);
+  useEffect(() => {
+    const mq2 = window.matchMedia("(max-width: 640px)");
+    const mq3 = window.matchMedia("(max-width: 900px)");
+    const update = () => setCols(mq2.matches ? 2 : (mq3.matches ? 3 : 4));
+    update(); mq2.addEventListener("change", update); mq3.addEventListener("change", update);
+    return () => { mq2.removeEventListener("change", update); mq3.removeEventListener("change", update); };
+  }, []);
+
   const filtered = useMemo(() => {
     let list = images;
     if (selectedFolder && selectedFolder !== "All") {
@@ -318,17 +317,10 @@ export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditPro
     const newVisibleOrder = list.map((i) => i._id || i.id);
     const others = images.filter((i) => !visibleIds.has(i._id || i.id));
     const newGlobal = [...list, ...others];
+
     setImages(newGlobal);
     persistReorder(newVisibleOrder);
   }
-
-  useEffect(() => {
-    const mq2 = window.matchMedia("(max-width: 640px)");
-    const mq3 = window.matchMedia("(max-width: 900px)");
-    const update = () => setCols(mq2.matches ? 2 : (mq3.matches ? 3 : 4));
-    update(); mq2.addEventListener("change", update); mq3.addEventListener("change", update);
-    return () => { mq2.removeEventListener("change", update); mq3.removeEventListener("change", update); };
-  }, []);
 
   /** -------- modal control helpers (EXCLUSIVE) -------- */
   const openViewer  = (idx) => { setMode("viewer");  setViewerIndex(idx); };
@@ -373,7 +365,12 @@ export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditPro
 
           {isOwner && (
             <div {...getRootProps()} style={{ display: "inline-flex", alignItems: "center" }}>
-              <button type="button" onClick={openFileDialog} style={{ ...select, display: "inline-flex", alignItems: "center", gap: 8 }} title="Upload images">
+              <button
+                type="button"
+                onClick={openFileDialog}
+                style={{ ...select, display: "inline-flex", alignItems: "center", gap: 8 }}
+                title="Upload images"
+              >
                 <FaUpload /> Upload
               </button>
               <input {...getInputProps()} />
@@ -381,7 +378,12 @@ export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditPro
           )}
 
           {/* Single launcher for full manager */}
-          <button type="button" onClick={openManager} style={{ ...select, display: "inline-flex", alignItems: "center", gap: 8 }} title="View all images">
+          <button
+            type="button"
+            onClick={openManager}
+            style={{ ...select, display: "inline-flex", alignItems: "center", gap: 8 }}
+            title="View all images"
+          >
             <FaEye /> View All
           </button>
         </div>
@@ -472,7 +474,7 @@ export default function ImageGallery({ ownerId: ownerIdProp, canEdit: canEditPro
               if (!updated) return;
               setImages((curr) =>
                 curr.map((im) =>
-                  ((im._id || im.id) === (updated._id || updated.id) ? { ...im, ...updated } : im)
+                  (idOf(im) === idOf(updated) ? { ...im, ...updated } : im)
                 )
               );
             }}

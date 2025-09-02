@@ -6,62 +6,34 @@ import { FaFolder, FaUpload, FaSyncAlt, FaTimes } from "react-icons/fa";
 import ImagePopupViewer from "./ImagePopupViewer.jsx";
 import socket, { connectSocket, joinGallery, leaveGallery } from "../socket";
 
-/* -------------------- API base + file host -------------------- */
+/* -------------------- API base + file host (with prod fallback) -------------------- */
 const env = (typeof import.meta !== "undefined" && import.meta.env) || {};
-const API_BASE = (env.VITE_API_BASE || "").replace(/\/$/, "");
 const isLocal = (() => {
   try {
     const h = window.location.hostname;
     return h === "localhost" || h === "127.0.0.1";
-  } catch { return true; }
+  } catch {
+    return true;
+  }
 })();
-const FILE_HOST = API_BASE || (isLocal ? "http://localhost:5000" : "");
-const api = (path, opts = {}) => fetch(`${API_BASE}${path}`, { credentials: "include", ...opts });
 
-/* -------------------- endpoints discovery -------------------- */
-const CANDIDATES = {
-  list: (ownerId) => [
-    `/api/gallery?accountId=${ownerId}`,
-    `/api/gallery/images?accountId=${ownerId}`,
-    `/api/images?accountId=${ownerId}`,
-    `/api/photos?accountId=${ownerId}`,
-    `/api/users/${ownerId}/gallery`,
-    `/api/user/${ownerId}/gallery`,
-  ],
-  folders: (ownerId) => [
-    `/api/gallery/folders?accountId=${ownerId}`,
-    `/api/folders?scope=gallery&accountId=${ownerId}`,
-    `/api/users/${ownerId}/gallery/folders`,
-  ],
-  upload: [
-    { path: `/api/gallery`, field: "image" },
-    { path: `/api/gallery/upload`, field: "image" },
-    { path: `/api/images`, field: "image" },
-    { path: `/api/media/upload`, field: "image" },
-    { path: `/api/upload`, field: "image" },
-  ],
+// If VITE_API_BASE is missing in prod, fall back to the API subdomain.
+// In local dev, keep it blank so fetch("/api/...") hits Vite proxy/same-origin.
+const API_FALLBACK = isLocal ? "" : "https://api.netspacezone.com";
+const API_BASE = (env.VITE_API_BASE || API_FALLBACK).replace(/\/$/, "");
+
+// Use the API host for serving /uploads in prod; localhost:5000 in dev.
+const FILE_HOST = API_BASE || (isLocal ? "http://localhost:5000" : "https://api.netspacezone.com");
+
+const api = (path, opts = {}) =>
+  fetch(`${API_BASE}${path}`, { credentials: "include", ...opts });
+
+/* -------------------- canonical endpoints only -------------------- */
+const ENDPOINTS = {
+  list: (ownerId) => `/api/gallery?accountId=${ownerId}`,
+  folders: (ownerId) => `/api/gallery/folders?accountId=${ownerId}`,
+  upload: { path: `/api/gallery`, field: "image" }, // POST multipart
 };
-
-async function toJsonSafe(r) { try { return await r.json(); } catch { return null; } }
-
-async function discover(ownerId) {
-  const find = async (arr, expectArrayKey) => {
-    for (const url of arr) {
-      try {
-        const r = await api(url);
-        if (!r.ok) continue;
-        const j = await toJsonSafe(r);
-        if (Array.isArray(j) || (expectArrayKey && Array.isArray(j?.[expectArrayKey]))) {
-          return { url, json: j };
-        }
-      } catch {}
-    }
-    return null;
-  };
-  const list = await find(CANDIDATES.list(ownerId), "images");
-  const folders = await find(CANDIDATES.folders(ownerId), "folders");
-  return { list: list?.url || null, folders: folders?.url || null };
-}
 
 /* -------------------- helpers -------------------- */
 const idOf = (im) => String(im?._id || im?.id || im?.filename || "");
@@ -83,7 +55,6 @@ export default function GalleryPopup({
   canEdit = false,
   initialFolder = "All",
 }) {
-  const [endpoints, setEndpoints] = useState(null);
   const [folders, setFolders] = useState(["All"]);
   const [folder, setFolder] = useState(initialFolder || "All");
   const [images, setImages] = useState([]);
@@ -95,63 +66,50 @@ export default function GalleryPopup({
     if (!open) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
+    return () => {
+      document.body.style.overflow = prev;
+    };
   }, [open]);
-
-  // discover endpoints
-  useEffect(() => {
-    if (!open || !ownerId) return;
-    let alive = true;
-    (async () => {
-      setLoading(true);
-      const d = await discover(ownerId);
-      if (!alive) return;
-      setEndpoints(d);
-      setLoading(false);
-    })();
-    return () => { alive = false; };
-  }, [open, ownerId]);
 
   // load folders + images
   const refresh = useCallback(async () => {
-    if (!open || !ownerId || !endpoints) return;
+    if (!open || !ownerId) return;
     setLoading(true);
     try {
       // folders
-      if (endpoints.folders) {
-        try {
-          const rf = await api(endpoints.folders);
-          if (rf.ok) {
-            const j = await toJsonSafe(rf);
-            const arr = Array.isArray(j) ? j : (Array.isArray(j?.folders) ? j.folders : []);
-            // Keep only user-created folders; strip "root" and duplicates
-            const extra = (arr || [])
-              .filter((f) => f && f !== "All" && String(f).toLowerCase() !== "root");
-            setFolders(["All", ...Array.from(new Set(extra))]);
-          } else {
-            setFolders(["All"]);
-          }
-        } catch {
+      try {
+        const rf = await api(ENDPOINTS.folders(ownerId));
+        if (rf.ok) {
+          const j = await rf.json().catch(() => null);
+          const arr = Array.isArray(j) ? j : Array.isArray(j?.folders) ? j.folders : [];
+          // Keep only user-created folders; strip "root" and duplicates
+          const extra = (arr || [])
+            .filter((f) => f && f !== "All" && String(f).toLowerCase() !== "root");
+          setFolders(["All", ...Array.from(new Set(extra))]);
+        } else {
           setFolders(["All"]);
         }
-      } else {
+      } catch {
         setFolders(["All"]);
       }
+
       // images
-      if (endpoints.list) {
-        const ri = await api(endpoints.list);
+      try {
+        const ri = await api(ENDPOINTS.list(ownerId));
         if (ri.ok) {
-          const j = await toJsonSafe(ri);
-          const arr = Array.isArray(j) ? j : (Array.isArray(j?.images) ? j.images : []);
+          const j = await ri.json().catch(() => null);
+          const arr = Array.isArray(j) ? j : Array.isArray(j?.images) ? j.images : [];
           setImages((arr || []).map((im) => ({ ...im, folder: im.folder || "All" })));
         }
-      }
+      } catch {}
     } finally {
       setLoading(false);
     }
-  }, [open, ownerId, endpoints]);
+  }, [open, ownerId]);
 
-  useEffect(() => { if (endpoints) refresh(); }, [endpoints, refresh]);
+  useEffect(() => {
+    if (open) refresh();
+  }, [open, ownerId, refresh]);
 
   // realtime sync
   useEffect(() => {
@@ -177,7 +135,10 @@ export default function GalleryPopup({
       setImages((curr) => {
         let found = false;
         const next = curr.map((x) => {
-          if (idOf(x) === id) { found = true; return { ...x, ...im }; }
+          if (idOf(x) === id) {
+            found = true;
+            return { ...x, ...im };
+          }
           return x;
         });
         return found ? next : [im, ...next];
@@ -197,23 +158,36 @@ export default function GalleryPopup({
   }, [open, ownerId, refresh]);
 
   // upload
-  const onDrop = useCallback(async (accepted) => {
-    if (!canEdit || !accepted?.length) return;
-    for (const f of accepted) {
-      if (f.size > 20 * 1024 * 1024) continue;
-      for (const { path, field } of CANDIDATES.upload) {
+  const onDrop = useCallback(
+    async (accepted) => {
+      if (!canEdit || !accepted?.length) return;
+      for (const f of accepted) {
+        if (f.size > 20 * 1024 * 1024) continue;
+
         try {
           const fd = new FormData();
-          fd.append(field, f, f.name);
+          fd.append(ENDPOINTS.upload.field, f, f.name);
           fd.append("accountId", ownerId);
           if (folder && folder !== "All") fd.append("folder", folder);
-          const r = await fetch(`${API_BASE}${path}`, { method: "POST", body: fd, credentials: "include" });
-          if (r.ok) break;
-        } catch {}
+
+          const r = await fetch(`${API_BASE}${ENDPOINTS.upload.path}`, {
+            method: "POST",
+            body: fd,
+            credentials: "include",
+          });
+
+          if (!r.ok) {
+            const t = await r.text().catch(() => "");
+            console.warn("Upload failed:", r.status, r.statusText, t.slice(0, 200));
+          }
+        } catch (e) {
+          console.warn("Upload error:", e?.message || e);
+        }
       }
-    }
-    refresh();
-  }, [canEdit, ownerId, folder, refresh]);
+      refresh();
+    },
+    [canEdit, ownerId, folder, refresh]
+  );
 
   const { getRootProps, getInputProps, open: openFileDialog } = useDropzone({
     onDrop,
@@ -320,7 +294,11 @@ export default function GalleryPopup({
               <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 <FaFolder />
                 <select value={folder} onChange={(e) => setFolder(e.target.value)} style={select}>
-                  {folders.map((f) => <option key={f} value={f}>{f}</option>)}
+                  {folders.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
                 </select>
               </label>
 
@@ -352,7 +330,9 @@ export default function GalleryPopup({
                   key={idOf(im) || i}
                   style={tile}
                   onClick={() => setViewerIdx(i)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setViewerIdx(i); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") setViewerIdx(i);
+                  }}
                   role="button"
                   tabIndex={0}
                 >
@@ -361,7 +341,9 @@ export default function GalleryPopup({
                     alt={im.caption || ""}
                     style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
                     loading="lazy"
-                    onError={(e) => { e.currentTarget.style.opacity = 0.4; }}
+                    onError={(e) => {
+                      e.currentTarget.style.opacity = 0.4;
+                    }}
                   />
                 </div>
               ))}
@@ -392,9 +374,9 @@ export default function GalleryPopup({
           closePopup={() => setViewerIdx(null)}
           updateGalleryImage={(updated) => {
             if (!updated) return;
-            setImages((curr) => curr.map((im) =>
-              ((im._id || im.id) === (updated._id || updated.id) ? { ...im, ...updated } : im)
-            ));
+            setImages((curr) =>
+              curr.map((im) => ((im._id || im.id) === (updated._id || updated.id) ? { ...im, ...updated } : im))
+            );
           }}
         />
       )}

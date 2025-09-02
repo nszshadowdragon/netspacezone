@@ -1,4 +1,4 @@
-// frontend/src/api/galleryApi.js  (or src/services/galleryApi.js)
+// frontend/src/services/galleryApi.js
 // Unified Gallery API client
 // - Keeps your "safe update" helpers to avoid username/avatar flicker
 // - Forces uploads to POST /api/gallery (not /api/upload)
