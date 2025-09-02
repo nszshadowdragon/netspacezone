@@ -245,8 +245,8 @@ export default function ImagePopupViewer({
   const when = timeago(current?.createdAt);
 
   /* ---------------- layout & styles ---------------- */
-  // Use CSS grid areas so desktop is always [meta | stage]
-  // and mobile stacks ["stage", "meta"].
+  // Always desktop: [meta | stage]
+  // Mobile: stack ["stage", "meta"] (image on top)
   const overlay = {
     position: "fixed",
     inset: 0,
@@ -278,15 +278,13 @@ export default function ImagePopupViewer({
   const responsive = `
     @media (max-width: 980px) {
       .iv-frame      { grid-template-columns: 1fr; grid-template-areas: "stage" "meta"; height: auto; max-height: 100vh; }
-      .iv-stageWrap  { max-height: 60vh; }  /* image on top with cap */
+      .iv-stageWrap  { max-height: 60vh; }  /* image ON TOP */
       .iv-stage      { height: 100%; }
       .iv-meta       { border-right: none; border-top: 1px solid #262626; }
       .iv-navZone    { width: 72px; }
       .iv-countBadge { left: 10px !important; top: 10px !important; }
     }
   `;
-
-  // Top-right close needs to sit above everything and be clickable
   const header = {
     position: "absolute",
     top: 8,
@@ -295,7 +293,7 @@ export default function ImagePopupViewer({
     display: "flex",
     alignItems: "center",
     justifyContent: "flex-end",
-    zIndex: 50,                    // <-- ensure on top of image
+    zIndex: 50,
   };
   const closeBtn = {
     border: "1px solid #2d2d2d",
@@ -307,7 +305,7 @@ export default function ImagePopupViewer({
     cursor: "pointer",
   };
 
-  // RIGHT: image stage (grid area)
+  // Image (grid area 'stage') — keep DOM order first so it's above on mobile
   const stageWrap = { gridArea: "stage", position: "relative", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" };
   const stage = { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" };
   const media = { maxWidth: "100%", maxHeight: `calc(100% - ${HEADER_H}px)`, objectFit: "contain", display: "block" };
@@ -337,7 +335,7 @@ export default function ImagePopupViewer({
     pointerEvents: "none",
   };
 
-  // LEFT: meta (grid area)
+  // Meta (grid area 'meta')
   const side = {
     gridArea: "meta",
     width: "100%",
@@ -423,7 +421,25 @@ export default function ImagePopupViewer({
           <button onClick={cleanUrlAndClose} style={closeBtn} aria-label="Close image">✕</button>
         </div>
 
-        {/* LEFT (grid area 'meta') */}
+        {/* IMAGE first in DOM so it appears on top on mobile */}
+        <div className="iv-stageWrap" style={stageWrap}>
+          <div className="iv-countBadge" style={countBadge}>{images.length ? `${idx + 1} / ${images.length}` : ""}</div>
+          <div className="iv-stage" style={stage}>
+            {prevExists && (
+              <div className="iv-navZone" style={navZone("left")} onClick={() => setIdx((i) => Math.max(0, i - 1))} aria-label="Previous image">
+                <div style={navBtn}>‹</div>
+              </div>
+            )}
+            <img src={buildSrc(current, fileHost)} alt={current?.caption || ""} style={media} />
+            {nextExists && (
+              <div className="iv-navZone" style={navZone("right")} onClick={() => setIdx((i) => Math.min(images.length - 1, i + 1))} aria-label="Next image">
+                <div style={navBtn}>›</div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* META second in DOM (left on desktop, below on mobile) */}
         <aside className="iv-meta" style={side}>
           <div style={topRow}>
             <div style={userWrap}>
@@ -474,43 +490,22 @@ export default function ImagePopupViewer({
           )}
 
           <div style={countsRow}>
-            <button style={iconBtn(iLike)}  onClick={() => toggleReaction("like")}   aria-pressed={iLike}   title={iLike ? "Unlike" : "Like"}>  👍 <span>{likesArr.length}</span></button>
-            <button style={iconBtn(iDislike)}onClick={() => toggleReaction("dislike")} aria-pressed={iDislike} title={iDislike ? "Undo dislike" : "Dislike"}> 👎 <span>{dislikesArr.length}</span></button>
+            <button style={iconBtn(iLike)} onClick={() => toggleReaction("like")} aria-pressed={iLike} title={iLike ? "Unlike" : "Like"}>👍 <span>{likesArr.length}</span></button>
+            <button style={iconBtn(iDislike)} onClick={() => toggleReaction("dislike")} aria-pressed={iDislike} title={iDislike ? "Undo dislike" : "Dislike"}>👎 <span>{dislikesArr.length}</span></button>
           </div>
 
           <div style={divider} />
           <div style={{ padding: "10px 0", color: "#aaa", fontStyle: "italic" }}>💬 Comments coming soon</div>
         </aside>
-
-        {/* RIGHT (grid area 'stage') */}
-        <div className="iv-stageWrap" style={stageWrap}>
-          <div className="iv-countBadge" style={countBadge}>{images.length ? `${idx + 1} / ${images.length}` : ""}</div>
-
-          <div className="iv-stage" style={stage}>
-            {prevExists && (
-              <div className="iv-navZone" style={navZone("left")} onClick={() => setIdx((i) => Math.max(0, i - 1))} aria-label="Previous image">
-                <div style={navBtn}>‹</div>
-              </div>
-            )}
-
-            <img src={src} alt={current?.caption || ""} style={media} />
-
-            {nextExists && (
-              <div className="iv-navZone" style={navZone("right")} onClick={() => setIdx((i) => Math.min(images.length - 1, i + 1))} aria-label="Next image">
-                <div style={navBtn}>›</div>
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* Confirm delete modal */}
       {confirmOpen && (
         <div role="dialog" aria-modal="true" style={modalOverlay} onKeyDown={(e) => { if (e.key === "Escape") cancelDelete(); if (e.key === "Enter") confirmDelete(); }}>
           <div style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <div style={modalTitle}>Delete image?</div>
-            <div style={modalText}>This action cannot be undone.</div>
-            <div style={modalRow}>
+            <div style={{ fontWeight: 900, color: "#fff", marginBottom: 8 }}>Delete image?</div>
+            <div style={{ color: "#bbb", marginBottom: 14 }}>This action cannot be undone.</div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
               <button style={modalBtn} onClick={cancelDelete} autoFocus>Cancel</button>
               <button style={modalBtnDanger} onClick={confirmDelete} disabled={deleting}>{deleting ? "Deleting…" : "Delete"}</button>
             </div>
