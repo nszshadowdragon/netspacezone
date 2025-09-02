@@ -1,5 +1,5 @@
 // frontend/src/components/GalleryPopup.jsx
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDropzone } from "react-dropzone";
 import { FaFolder, FaUpload, FaSyncAlt, FaTimes } from "react-icons/fa";
@@ -32,13 +32,6 @@ const CANDIDATES = {
     `/api/gallery/folders?accountId=${ownerId}`,
     `/api/folders?scope=gallery&accountId=${ownerId}`,
     `/api/users/${ownerId}/gallery/folders`,
-  ],
-  upload: [
-    { path: `/api/gallery`, field: "image" },
-    { path: `/api/gallery/upload`, field: "image" },
-    { path: `/api/images`, field: "image" },
-    { path: `/api/media/upload`, field: "image" },
-    { path: `/api/upload`, field: "image" },
   ],
 };
 
@@ -196,20 +189,28 @@ export default function GalleryPopup({
     };
   }, [open, ownerId, refresh]);
 
-  // upload
+  // upload — FORCE to /api/gallery
   const onDrop = useCallback(async (accepted) => {
     if (!canEdit || !accepted?.length) return;
+    const token = localStorage.getItem("nsz_token") || sessionStorage.getItem("nsz_token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
     for (const f of accepted) {
       if (f.size > 20 * 1024 * 1024) continue;
-      for (const { path, field } of CANDIDATES.upload) {
-        try {
-          const fd = new FormData();
-          fd.append(field, f, f.name);
-          fd.append("accountId", ownerId);
-          if (folder && folder !== "All") fd.append("folder", folder);
-          const r = await fetch(`${API_BASE}${path}`, { method: "POST", body: fd, credentials: "include" });
-          if (r.ok) break;
-        } catch {}
+      const fd = new FormData();
+      fd.append("image", f, f.name);          // server expects "image"
+      fd.append("accountId", ownerId);
+      if (folder && folder !== "All") fd.append("folder", folder);
+
+      const r = await fetch(`${API_BASE}/api/gallery`, {
+        method: "POST",
+        body: fd,
+        credentials: "include",
+        headers,
+      });
+      if (!r.ok) {
+        const t = await r.text().catch(() => "");
+        console.warn("Upload failed:", r.status, t);
       }
     }
     refresh();
