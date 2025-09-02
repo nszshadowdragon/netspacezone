@@ -86,11 +86,11 @@ export default function ImagePopupViewer({
   const prevExists = idx > 0;
   const nextExists = idx < images.length - 1;
 
-  // track mounted to avoid setState on unmount
+  // avoid setting state after unmount
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
-  // If images shrink (e.g., after delete) and idx is out of bounds, fix it or close viewer.
+  // keep idx valid if list shrinks after delete
   useEffect(() => {
     if (idx >= images.length) {
       if (images.length === 0) {
@@ -109,7 +109,7 @@ export default function ImagePopupViewer({
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  // deep-link ?image=<id>, restore on unmount/close
+  // deep-link ?image=<id>
   const initialUrlRef = useRef(typeof window !== "undefined" ? window.location.href : "");
   useEffect(() => {
     if (!current) return;
@@ -200,7 +200,7 @@ export default function ImagePopupViewer({
 
       if (saved) optimisticUpdate(saved);
     } catch {
-      // optional: toast
+      // optional toast
     } finally {
       if (mountedRef.current) setWorking(false);
     }
@@ -218,7 +218,7 @@ export default function ImagePopupViewer({
       if (saved) optimisticUpdate(saved);
       setEditing(false);
     } catch {
-      // optional: toast
+      // optional toast
     } finally {
       if (mountedRef.current) setSaving(false);
     }
@@ -250,7 +250,6 @@ export default function ImagePopupViewer({
   }, [ownerId, current]);
 
   if (!current) {
-    // If parent left us mounted for a tick with no current image, clean URL and close.
     cleanUrlAndClose();
     return null;
   }
@@ -274,13 +273,12 @@ export default function ImagePopupViewer({
     paddingRight: `max(${GAP}px, env(safe-area-inset-right))`,
     paddingBottom: `max(${GAP}px, env(safe-area-inset-bottom))`,
     paddingLeft: `max(${GAP}px, env(safe-area-inset-left))`,
-    overflowY: "auto", // allow full scroll on mobile
+    overflowY: "auto", // <— mobile: whole dialog scrolls
   };
   const frame = {
     position: "relative",
     width: "min(1600px, 100%)",
-    // On mobile we let height be auto; see responsive CSS below
-    height: "100%",
+    height: "100%",                   // desktop: full height
     border: "1px solid #2d2d2d",
     borderRadius: RADIUS,
     overflow: "hidden",
@@ -292,9 +290,10 @@ export default function ImagePopupViewer({
   };
   const responsive = `
     @media (max-width: 980px) {
-      .iv-frame      { grid-template-columns: 1fr; height: auto; max-height: 92vh; }
+      .iv-frame      { grid-template-columns: 1fr; height: auto; max-height: 100vh; }
       .iv-meta       { width: 100%; max-height: none; border-right: none; border-top: 1px solid #262626; }
-      .iv-stageWrap  { order: -1; }
+      .iv-stageWrap  { order: -1; max-height: 60vh; } /* cap image area ~60% of viewport */
+      .iv-stage      { height: 100%; }
       .iv-navZone    { width: 72px; }
       .iv-countBadge { left: 10px !important; top: 10px !important; }
     }
@@ -520,26 +519,34 @@ export default function ImagePopupViewer({
 
             <div ref={menuRef} style={{ position: "relative" }}>
               <button
-                style={actionsIconBtn}
+                style={{
+                  width: 36, height: 32, display: "grid", placeItems: "center",
+                  border: "1px solid #2d2d2d", background: "#121212", color: ACCENT,
+                  borderRadius: 8, fontSize: 18, lineHeight: 1,
+                }}
                 onClick={() => setMenuOpen((v) => !v)}
                 aria-label="More actions"
               >
                 ⋯
               </button>
               {menuOpen && (
-                <div style={menu}>
+                <div style={{
+                  position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 20,
+                  background: "#0b0b0b", border: "1px solid #262626", borderRadius: 10, minWidth: 220,
+                  boxShadow: "0 8px 24px rgba(0,0,0,.5)", overflow: "hidden",
+                }}>
                   {!editing && (
-                    <button style={item} onClick={() => { setMenuOpen(false); setEditing(true); }}>
+                    <button style={menuItem} onClick={() => { setMenuOpen(false); setEditing(true); }}>
                       ✎ Edit caption
                     </button>
                   )}
-                  <button style={item} onClick={() => { setMenuOpen(false); setShowInfo((v) => !v); }}>
+                  <button style={menuItem} onClick={() => { setMenuOpen(false); setShowInfo((v) => !v); }}>
                     {showInfo ? "Hide info" : "Show info"}
                   </button>
-                  <button style={item} onClick={() => { setMenuOpen(false); copyShare(); }}>
+                  <button style={menuItem} onClick={() => { setMenuOpen(false); copyShare(); }}>
                     {copied ? "✓ Link copied" : "🔗 Share link"}
                   </button>
-                  <button style={itemDanger} onClick={openDeleteConfirm} disabled={deleting}>
+                  <button style={{ ...menuItem, color: "#f87171" }} onClick={openDeleteConfirm} disabled={deleting}>
                     🗑 Delete image
                   </button>
                 </div>
@@ -547,7 +554,7 @@ export default function ImagePopupViewer({
             </div>
           </div>
 
-          <div style={divider} />
+          <div style={{ borderTop: "1px solid #262626", margin: "10px 0" }} />
 
           {/* Info panel (appears ABOVE caption when toggled) */}
           {showInfo && (
@@ -599,7 +606,7 @@ export default function ImagePopupViewer({
             </button>
           </div>
 
-          <div style={divider} />
+          <div style={{ borderTop: "1px solid #262626", margin: "10px 0" }} />
 
           {/* Comments placeholder */}
           <div style={{ padding: "10px 0", color: "#aaa", fontStyle: "italic" }}>
@@ -609,19 +616,13 @@ export default function ImagePopupViewer({
 
         {/* RIGHT: image stage */}
         <div className="iv-stageWrap" style={stageWrap}>
-          {/* Image count badge is now inside the right pane */}
           <div className="iv-countBadge" style={countBadge}>
             {images.length ? `${idx + 1} / ${images.length}` : ""}
           </div>
 
           <div className="iv-stage" style={stage}>
             {prevExists && (
-              <div
-                className="iv-navZone"
-                style={navZone("left")}
-                onClick={() => setIdx((i) => Math.max(0, i - 1))}
-                aria-label="Previous image"
-              >
+              <div className="iv-navZone" style={navZone("left")} onClick={() => setIdx((i) => Math.max(0, i - 1))} aria-label="Previous image">
                 <div style={navBtn}>‹</div>
               </div>
             )}
@@ -629,12 +630,7 @@ export default function ImagePopupViewer({
             <img src={src} alt={current?.caption || ""} style={media} />
 
             {nextExists && (
-              <div
-                className="iv-navZone"
-                style={navZone("right")}
-                onClick={() => setIdx((i) => Math.min(images.length - 1, i + 1))}
-                aria-label="Next image"
-              >
+              <div className="iv-navZone" style={navZone("right")} onClick={() => setIdx((i) => Math.min(images.length - 1, i + 1))} aria-label="Next image">
                 <div style={navBtn}>›</div>
               </div>
             )}
@@ -654,9 +650,9 @@ export default function ImagePopupViewer({
           }}
         >
           <div style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <div style={modalTitle}>Delete image?</div>
-            <div style={modalText}>This action cannot be undone.</div>
-            <div style={modalRow}>
+            <div style={{ fontWeight: 900, color: "#fff", marginBottom: 8 }}>Delete image?</div>
+            <div style={{ color: "#bbb", marginBottom: 14 }}>This action cannot be undone.</div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
               <button style={modalBtn} onClick={cancelDelete} autoFocus>Cancel</button>
               <button style={modalBtnDanger} onClick={confirmDelete} disabled={deleting}>
                 {deleting ? "Deleting…" : "Delete"}
@@ -668,3 +664,15 @@ export default function ImagePopupViewer({
     </div>
   );
 }
+
+/* small helper style for menu items */
+const menuItem = {
+  display: "block",
+  width: "100%",
+  textAlign: "left",
+  padding: "10px 12px",
+  color: "#ddd",
+  background: "transparent",
+  border: "none",
+  cursor: "pointer",
+};
