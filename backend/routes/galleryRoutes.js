@@ -197,8 +197,8 @@ router.get("/", async (req, res) => {
   }
 });
 
-// POST /api/gallery (upload image)
-router.post("/", requireAuth, upload.single("image"), async (req, res) => {
+/* ------------- CREATE (shared handler used by two POST routes) ------------ */
+async function handleCreate(req, res) {
   try {
     const io = req.app.get("io");
     const { accountId, folder = "All" } = req.body;
@@ -225,7 +225,13 @@ router.post("/", requireAuth, upload.single("image"), async (req, res) => {
     console.error("POST /api/gallery error:", e);
     res.status(500).json({ error: "Upload failed" });
   }
-});
+}
+
+// POST /api/gallery (upload image)  — canonical endpoint
+router.post("/", requireAuth, upload.single("image"), handleCreate);
+
+// POST /api/gallery/upload (alias, for older clients)
+router.post("/upload", requireAuth, upload.single("image"), handleCreate);
 
 // PATCH /api/gallery/:filename  (caption/folder/likes/dislikes/comments)
 router.patch("/:filename", requireAuth, async (req, res) => {
