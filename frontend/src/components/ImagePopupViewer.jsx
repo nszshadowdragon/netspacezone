@@ -65,9 +65,7 @@ function pickAvatar(u) {
     u.photoUrl || u.photoURL || u.picture || ""
   );
 }
-function initialOf(name) {
-  return (name || "U").trim().charAt(0).toUpperCase();
-}
+function initialOf(name) { return (name || "U").trim().charAt(0).toUpperCase(); }
 
 /* ---------------- component ---------------- */
 export default function ImagePopupViewer({
@@ -86,7 +84,7 @@ export default function ImagePopupViewer({
   const prevExists = idx > 0;
   const nextExists = idx < images.length - 1;
 
-  // avoid setting state after unmount
+  // avoid setState after unmount
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
@@ -110,7 +108,6 @@ export default function ImagePopupViewer({
   }, []);
 
   // deep-link ?image=<id>
-  const initialUrlRef = useRef(typeof window !== "undefined" ? window.location.href : "");
   useEffect(() => {
     if (!current) return;
     const url = new URL(window.location.href);
@@ -127,7 +124,7 @@ export default function ImagePopupViewer({
     closePopup?.();
   }
 
-  // keyboard navigation
+  // keys
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); cleanUrlAndClose(); }
@@ -175,19 +172,11 @@ export default function ImagePopupViewer({
       let nextDislikes = [...curDislikes];
 
       if (kind === "like") {
-        if (nextLikes.includes(idMe)) {
-          nextLikes = nextLikes.filter((x) => x !== idMe);
-        } else {
-          nextLikes.push(idMe);
-          nextDislikes = nextDislikes.filter((x) => x !== idMe);
-        }
+        if (nextLikes.includes(idMe)) nextLikes = nextLikes.filter((x) => x !== idMe);
+        else nextLikes.push(idMe), (nextDislikes = nextDislikes.filter((x) => x !== idMe));
       } else {
-        if (nextDislikes.includes(idMe)) {
-          nextDislikes = nextDislikes.filter((x) => x !== idMe);
-        } else {
-          nextDislikes.push(idMe);
-          nextLikes = nextLikes.filter((x) => x !== idMe);
-        }
+        if (nextDislikes.includes(idMe)) nextDislikes = nextDislikes.filter((x) => x !== idMe);
+        else nextDislikes.push(idMe), (nextLikes = nextLikes.filter((x) => x !== idMe));
       }
 
       optimisticUpdate({ ...current, likes: nextLikes, dislikes: nextDislikes, reactions: undefined });
@@ -197,7 +186,6 @@ export default function ImagePopupViewer({
         filename: current.filename || idOf(current),
         body: { likes: nextLikes, dislikes: nextDislikes },
       });
-
       if (saved) optimisticUpdate(saved);
     } catch {
       // optional toast
@@ -224,7 +212,7 @@ export default function ImagePopupViewer({
     }
   }
 
-  // realtime: gallery updates + presence
+  // realtime
   const [online, setOnline] = useState(false);
   useEffect(() => {
     connectSocket();
@@ -232,7 +220,6 @@ export default function ImagePopupViewer({
 
     const onGalleryUpdated = (evt) => {
       const updated = evt?.payload || evt || null;
-      if (!updated) return;
       if (idOf(updated) === idOf(current)) optimisticUpdate(updated);
     };
     const onPresence = (p) => {
@@ -249,10 +236,7 @@ export default function ImagePopupViewer({
     };
   }, [ownerId, current]);
 
-  if (!current) {
-    cleanUrlAndClose();
-    return null;
-  }
+  if (!current) { cleanUrlAndClose(); return null; }
 
   const src = buildSrc(current, fileHost);
   const ownerUser = current?.user || current?.owner || {};
@@ -260,7 +244,9 @@ export default function ImagePopupViewer({
   const ownerAvatar = pickAvatar(ownerUser);
   const when = timeago(current?.createdAt);
 
-  /* ---------------- styles ---------------- */
+  /* ---------------- layout & styles ---------------- */
+  // Use CSS grid areas so desktop is always [meta | stage]
+  // and mobile stacks ["stage", "meta"].
   const overlay = {
     position: "fixed",
     inset: 0,
@@ -273,12 +259,12 @@ export default function ImagePopupViewer({
     paddingRight: `max(${GAP}px, env(safe-area-inset-right))`,
     paddingBottom: `max(${GAP}px, env(safe-area-inset-bottom))`,
     paddingLeft: `max(${GAP}px, env(safe-area-inset-left))`,
-    overflowY: "auto", // <— mobile: whole dialog scrolls
+    overflowY: "auto",
   };
   const frame = {
     position: "relative",
     width: "min(1600px, 100%)",
-    height: "100%",                   // desktop: full height
+    height: "100%",
     border: "1px solid #2d2d2d",
     borderRadius: RADIUS,
     overflow: "hidden",
@@ -286,35 +272,43 @@ export default function ImagePopupViewer({
     background: "#050505",
     display: "grid",
     gridTemplateColumns: "380px 1fr",
+    gridTemplateAreas: `"meta stage"`,
     columnGap: 12,
   };
   const responsive = `
     @media (max-width: 980px) {
-      .iv-frame      { grid-template-columns: 1fr; height: auto; max-height: 100vh; }
-      .iv-meta       { width: 100%; max-height: none; border-right: none; border-top: 1px solid #262626; }
-      .iv-stageWrap  { order: -1; max-height: 60vh; } /* cap image area ~60% of viewport */
+      .iv-frame      { grid-template-columns: 1fr; grid-template-areas: "stage" "meta"; height: auto; max-height: 100vh; }
+      .iv-stageWrap  { max-height: 60vh; }  /* image on top with cap */
       .iv-stage      { height: 100%; }
+      .iv-meta       { border-right: none; border-top: 1px solid #262626; }
       .iv-navZone    { width: 72px; }
       .iv-countBadge { left: 10px !important; top: 10px !important; }
     }
   `;
+
+  // Top-right close needs to sit above everything and be clickable
   const header = {
-    position: "absolute", top: 8, right: 8, height: HEADER_H,
-    display: "flex", alignItems: "center", justifyContent: "flex-end",
-    pointerEvents: "none",
+    position: "absolute",
+    top: 8,
+    right: 8,
+    height: HEADER_H,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    zIndex: 50,                    // <-- ensure on top of image
   };
   const closeBtn = {
-    pointerEvents: "auto",
     border: "1px solid #2d2d2d",
     background: "rgba(0,0,0,.55)",
     color: "#eee",
     borderRadius: 10,
     padding: "8px 12px",
     fontWeight: 800,
+    cursor: "pointer",
   };
 
-  // RIGHT: image stage
-  const stageWrap = { position: "relative", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" };
+  // RIGHT: image stage (grid area)
+  const stageWrap = { gridArea: "stage", position: "relative", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" };
   const stage = { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" };
   const media = { maxWidth: "100%", maxHeight: `calc(100% - ${HEADER_H}px)`, objectFit: "contain", display: "block" };
   const navZone = (side) => ({
@@ -329,8 +323,6 @@ export default function ImagePopupViewer({
     border: "1px solid #2d2d2d", background: "rgba(0,0,0,.55)",
     color: "#eee", fontSize: 28, lineHeight: "42px", textAlign: "center", fontWeight: 900,
   };
-
-  // count badge — inside RIGHT pane (stageWrap) top-left
   const countBadge = {
     position: "absolute",
     top: 8,
@@ -345,10 +337,10 @@ export default function ImagePopupViewer({
     pointerEvents: "none",
   };
 
-  // LEFT: details/meta (VERTICAL ONLY; no horizontal scroll)
+  // LEFT: meta (grid area)
   const side = {
-    position: "relative",
-    width: 380,
+    gridArea: "meta",
+    width: "100%",
     padding: "14px",
     color: "#ddd",
     overflowY: "auto",
@@ -356,28 +348,17 @@ export default function ImagePopupViewer({
     borderRight: "1px solid #262626",
     overscrollBehavior: "contain",
   };
-  const topRow = {
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-    gap: 8, marginBottom: 8,
-  };
+
+  const topRow = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 };
   const userWrap = { display: "flex", alignItems: "center", gap: 10, minWidth: 0 };
-  const avatarStyle = {
-    width: 36, height: 36, borderRadius: "9999px", background: "#111",
-    border: "1px solid #2d2d2d", overflow: "hidden", display: "grid", placeItems: "center",
-    color: "#ccc", fontWeight: 900,
-  };
+  const avatarStyle = { width: 36, height: 36, borderRadius: "9999px", background: "#111", border: "1px solid #2d2d2d", overflow: "hidden", display: "grid", placeItems: "center", color: "#ccc", fontWeight: 900 };
   const dot = (on) => ({ width: 8, height: 8, borderRadius: 9999, background: on ? "#16a34a" : "#555", boxShadow: on ? "0 0 8px rgba(22,163,74,.7)" : "none" });
   const userName = { fontWeight: 900, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
   const sub = { opacity: 0.75, fontSize: 12 };
   const divider = { borderTop: "1px solid #262626", margin: "10px 0" };
 
-  const iconBtn = (active) => ({
-    display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer",
-    border: "1px solid #2d2d2d", background: "#121212",
-    color: active ? ACCENT : "#bbb", borderRadius: 10, padding: "6px 10px", fontWeight: 800,
-  });
+  const iconBtn = (active) => ({ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", border: "1px solid #2d2d2d", background: "#121212", color: active ? ACCENT : "#bbb", borderRadius: 10, padding: "6px 10px", fontWeight: 800 });
   const countsRow = { display: "flex", gap: 10, alignItems: "center", marginTop: 10 };
-
   const captionBox = { whiteSpace: "pre-wrap", lineHeight: 1.45, overflowWrap: "anywhere", wordBreak: "break-word", marginTop: 10 };
   const editArea = { width: "100%", minHeight: 80, resize: "vertical", background: "#0e0e0e", color: "#eee", border: "1px solid #2d2d2d", borderRadius: 10, padding: 10 };
   const editRow = { display: "flex", gap: 8, marginTop: 8 };
@@ -396,20 +377,9 @@ export default function ImagePopupViewer({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const actionsIconBtn = {
-    width: 36, height: 32, display: "grid", placeItems: "center",
-    border: "1px solid #2d2d2d", background: "#121212", color: ACCENT,
-    borderRadius: 8, fontSize: 18, lineHeight: 1,
-  };
-  const menu = {
-    position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 20,
-    background: "#0b0b0b", border: "1px solid #262626", borderRadius: 10, minWidth: 220,
-    boxShadow: "0 8px 24px rgba(0,0,0,.5)", overflow: "hidden",
-  };
-  const item = {
-    display: "block", width: "100%", textAlign: "left", padding: "10px 12px",
-    color: "#ddd", background: "transparent", border: "none", cursor: "pointer",
-  };
+  const actionsIconBtn = { width: 36, height: 32, display: "grid", placeItems: "center", border: "1px solid #2d2d2d", background: "#121212", color: ACCENT, borderRadius: 8, fontSize: 18, lineHeight: 1, cursor: "pointer" };
+  const menu = { position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 20, background: "#0b0b0b", border: "1px solid #262626", borderRadius: 10, minWidth: 220, boxShadow: "0 8px 24px rgba(0,0,0,.5)", overflow: "hidden" };
+  const item = { display: "block", width: "100%", textAlign: "left", padding: "10px 12px", color: "#ddd", background: "transparent", border: "none", cursor: "pointer" };
   const itemDanger = { ...item, color: "#f87171" };
 
   /* ---------------- UI ---------------- */
@@ -423,69 +393,25 @@ export default function ImagePopupViewer({
       setTimeout(() => setCopied(false), 1200);
     } catch {}
   }
-
-  function openDeleteConfirm() {
-    setMenuOpen(false);
-    setConfirmOpen(true);
-  }
-
+  function openDeleteConfirm() { setMenuOpen(false); setConfirmOpen(true); }
   async function confirmDelete() {
     if (!current || deleting) return;
     const filename = current.filename || idOf(current);
     setDeleting(true);
-    try {
-      await deleteImageReq({ ownerId, filename });
-      setConfirmOpen(false);
-      cleanUrlAndClose(); // close viewer; list refreshes via socket
-    } catch (e) {
-      setConfirmOpen(false);
-      alert(`Delete failed: ${e?.message || e}`);
-    } finally {
-      if (mountedRef.current) setDeleting(false);
-    }
+    try { await deleteImageReq({ ownerId, filename }); setConfirmOpen(false); cleanUrlAndClose(); }
+    catch (e) { setConfirmOpen(false); alert(`Delete failed: ${e?.message || e}`); }
+    finally { if (mountedRef.current) setDeleting(false); }
   }
-
-  function cancelDelete() {
-    setConfirmOpen(false);
-  }
+  function cancelDelete() { setConfirmOpen(false); }
 
   // confirm modal styles
-  const modalOverlay = {
-    position: "fixed",
-    inset: 0,
-    zIndex: 10000,
-    background: "rgba(0,0,0,.6)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 12,
-  };
-  const modalCard = {
-    width: "min(480px, 92vw)",
-    background: "#0b0b0b",
-    border: "1px solid #2d2d2d",
-    borderRadius: 14,
-    boxShadow: "0 10px 40px rgba(0,0,0,.55)",
-    padding: 16,
-    color: "#eee",
-  };
+  const modalOverlay = { position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12 };
+  const modalCard = { width: "min(480px, 92vw)", background: "#0b0b0b", border: "1px solid #2d2d2d", borderRadius: 14, boxShadow: "0 10px 40px rgba(0,0,0,.55)", padding: 16, color: "#eee" };
   const modalTitle = { fontWeight: 900, color: "#fff", marginBottom: 8 };
   const modalText = { color: "#bbb", marginBottom: 14 };
   const modalRow = { display: "flex", gap: 10, justifyContent: "flex-end" };
-  const modalBtn = {
-    border: "1px solid #2d2d2d",
-    background: "#1a1a1a",
-    color: ACCENT,
-    borderRadius: 10,
-    padding: "8px 12px",
-    fontWeight: 800,
-  };
-  const modalBtnDanger = {
-    ...modalBtn,
-    background: "#3a0d0d",
-    borderColor: "#7f1d1d",
-    color: "#fca5a5",
-  };
+  const modalBtn = { border: "1px solid #2d2d2d", background: "#1a1a1a", color: ACCENT, borderRadius: 10, padding: "8px 12px", fontWeight: 800 };
+  const modalBtnDanger = { ...modalBtn, background: "#3a0d0d", borderColor: "#7f1d1d", color: "#fca5a5" };
 
   return (
     <div role="dialog" aria-modal="true" style={overlay} onClick={(e) => { if (e.target === e.currentTarget) cleanUrlAndClose(); }}>
@@ -497,16 +423,12 @@ export default function ImagePopupViewer({
           <button onClick={cleanUrlAndClose} style={closeBtn} aria-label="Close image">✕</button>
         </div>
 
-        {/* LEFT: meta */}
+        {/* LEFT (grid area 'meta') */}
         <aside className="iv-meta" style={side}>
           <div style={topRow}>
             <div style={userWrap}>
               <div style={avatarStyle}>
-                {ownerAvatar ? (
-                  <img src={ownerAvatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                ) : (
-                  <span>{initialOf(ownerName)}</span>
-                )}
+                {ownerAvatar ? <img src={ownerAvatar} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span>{initialOf(ownerName)}</span>}
               </div>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -518,45 +440,20 @@ export default function ImagePopupViewer({
             </div>
 
             <div ref={menuRef} style={{ position: "relative" }}>
-              <button
-                style={{
-                  width: 36, height: 32, display: "grid", placeItems: "center",
-                  border: "1px solid #2d2d2d", background: "#121212", color: ACCENT,
-                  borderRadius: 8, fontSize: 18, lineHeight: 1,
-                }}
-                onClick={() => setMenuOpen((v) => !v)}
-                aria-label="More actions"
-              >
-                ⋯
-              </button>
+              <button style={actionsIconBtn} onClick={() => setMenuOpen((v) => !v)} aria-label="More actions">⋯</button>
               {menuOpen && (
-                <div style={{
-                  position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 20,
-                  background: "#0b0b0b", border: "1px solid #262626", borderRadius: 10, minWidth: 220,
-                  boxShadow: "0 8px 24px rgba(0,0,0,.5)", overflow: "hidden",
-                }}>
-                  {!editing && (
-                    <button style={menuItem} onClick={() => { setMenuOpen(false); setEditing(true); }}>
-                      ✎ Edit caption
-                    </button>
-                  )}
-                  <button style={menuItem} onClick={() => { setMenuOpen(false); setShowInfo((v) => !v); }}>
-                    {showInfo ? "Hide info" : "Show info"}
-                  </button>
-                  <button style={menuItem} onClick={() => { setMenuOpen(false); copyShare(); }}>
-                    {copied ? "✓ Link copied" : "🔗 Share link"}
-                  </button>
-                  <button style={{ ...menuItem, color: "#f87171" }} onClick={openDeleteConfirm} disabled={deleting}>
-                    🗑 Delete image
-                  </button>
+                <div style={menu}>
+                  {!editing && <button style={item} onClick={() => { setMenuOpen(false); setEditing(true); }}>✎ Edit caption</button>}
+                  <button style={item} onClick={() => { setMenuOpen(false); setShowInfo((v) => !v); }}>{showInfo ? "Hide info" : "Show info"}</button>
+                  <button style={item} onClick={() => { setMenuOpen(false); copyShare(); }}>{copied ? "✓ Link copied" : "🔗 Share link"}</button>
+                  <button style={itemDanger} onClick={openDeleteConfirm} disabled={deleting}>🗑 Delete image</button>
                 </div>
               )}
             </div>
           </div>
 
-          <div style={{ borderTop: "1px solid #262626", margin: "10px 0" }} />
+          <div style={divider} />
 
-          {/* Info panel (appears ABOVE caption when toggled) */}
           {showInfo && (
             <div style={{ fontSize: 13, color: "#aaa", marginBottom: 8, overflowWrap: "anywhere", wordBreak: "break-word" }}>
               {current?.filename && <div><strong>File:</strong> {current.filename}</div>}
@@ -564,61 +461,30 @@ export default function ImagePopupViewer({
             </div>
           )}
 
-          {/* Caption */}
           {!editing ? (
             <div style={captionBox}>{current?.caption || <span style={{ opacity: 0.6 }}>No caption</span>}</div>
           ) : (
             <>
-              <textarea
-                value={caption}
-                onChange={(e) => setCaption(e.target.value)}
-                placeholder="Write a caption…"
-                style={editArea}
-              />
+              <textarea value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Write a caption…" style={editArea} />
               <div style={editRow}>
-                <button style={editBtn} onClick={saveCaption} disabled={saving}>
-                  {saving ? "Saving…" : "Save"}
-                </button>
-                <button style={editBtn} onClick={() => { setCaption(current?.caption || ""); setEditing(false); }} disabled={saving}>
-                  Cancel
-                </button>
+                <button style={editBtn} onClick={saveCaption} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+                <button style={editBtn} onClick={() => { setCaption(current?.caption || ""); setEditing(false); }} disabled={saving}>Cancel</button>
               </div>
             </>
           )}
 
-          {/* Reactions: icon buttons */}
           <div style={countsRow}>
-            <button
-              style={iconBtn(iLike)}
-              onClick={() => toggleReaction("like")}
-              aria-pressed={iLike}
-              title={iLike ? "Unlike" : "Like"}
-            >
-              👍 <span>{likesArr.length}</span>
-            </button>
-            <button
-              style={iconBtn(iDislike)}
-              onClick={() => toggleReaction("dislike")}
-              aria-pressed={iDislike}
-              title={iDislike ? "Undo dislike" : "Dislike"}
-            >
-              👎 <span>{dislikesArr.length}</span>
-            </button>
+            <button style={iconBtn(iLike)}  onClick={() => toggleReaction("like")}   aria-pressed={iLike}   title={iLike ? "Unlike" : "Like"}>  👍 <span>{likesArr.length}</span></button>
+            <button style={iconBtn(iDislike)}onClick={() => toggleReaction("dislike")} aria-pressed={iDislike} title={iDislike ? "Undo dislike" : "Dislike"}> 👎 <span>{dislikesArr.length}</span></button>
           </div>
 
-          <div style={{ borderTop: "1px solid #262626", margin: "10px 0" }} />
-
-          {/* Comments placeholder */}
-          <div style={{ padding: "10px 0", color: "#aaa", fontStyle: "italic" }}>
-            💬 Comments coming soon
-          </div>
+          <div style={divider} />
+          <div style={{ padding: "10px 0", color: "#aaa", fontStyle: "italic" }}>💬 Comments coming soon</div>
         </aside>
 
-        {/* RIGHT: image stage */}
+        {/* RIGHT (grid area 'stage') */}
         <div className="iv-stageWrap" style={stageWrap}>
-          <div className="iv-countBadge" style={countBadge}>
-            {images.length ? `${idx + 1} / ${images.length}` : ""}
-          </div>
+          <div className="iv-countBadge" style={countBadge}>{images.length ? `${idx + 1} / ${images.length}` : ""}</div>
 
           <div className="iv-stage" style={stage}>
             {prevExists && (
@@ -638,25 +504,15 @@ export default function ImagePopupViewer({
         </div>
       </div>
 
-      {/* Site-styled confirm delete modal (centered) */}
+      {/* Confirm delete modal */}
       {confirmOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={modalOverlay}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") cancelDelete();
-            if (e.key === "Enter")  confirmDelete();
-          }}
-        >
+        <div role="dialog" aria-modal="true" style={modalOverlay} onKeyDown={(e) => { if (e.key === "Escape") cancelDelete(); if (e.key === "Enter") confirmDelete(); }}>
           <div style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontWeight: 900, color: "#fff", marginBottom: 8 }}>Delete image?</div>
-            <div style={{ color: "#bbb", marginBottom: 14 }}>This action cannot be undone.</div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <div style={modalTitle}>Delete image?</div>
+            <div style={modalText}>This action cannot be undone.</div>
+            <div style={modalRow}>
               <button style={modalBtn} onClick={cancelDelete} autoFocus>Cancel</button>
-              <button style={modalBtnDanger} onClick={confirmDelete} disabled={deleting}>
-                {deleting ? "Deleting…" : "Delete"}
-              </button>
+              <button style={modalBtnDanger} onClick={confirmDelete} disabled={deleting}>{deleting ? "Deleting…" : "Delete"}</button>
             </div>
           </div>
         </div>
@@ -664,15 +520,3 @@ export default function ImagePopupViewer({
     </div>
   );
 }
-
-/* small helper style for menu items */
-const menuItem = {
-  display: "block",
-  width: "100%",
-  textAlign: "left",
-  padding: "10px 12px",
-  color: "#ddd",
-  background: "transparent",
-  border: "none",
-  cursor: "pointer",
-};
