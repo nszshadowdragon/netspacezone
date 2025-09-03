@@ -282,9 +282,42 @@ export default function GalleryPopup({
     fontSize: 13,
   };
 
+  // Component-scoped CSS that enforces the mobile layout for ImagePopupViewer.
+  // This ensures that on small screens the image is on top and the meta panel is below,
+  // even if parent containers elsewhere use flex/grid that would otherwise interfere.
+  const viewerMobileCss = `
+    @media (max-width: 980px) {
+      .iv-frame {
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        grid-template-areas: "stage" "meta" !important;
+        height: auto !important;
+        max-height: 100vh !important;
+      }
+      .iv-stageWrap { grid-area: stage !important; }
+      .iv-meta { grid-area: meta !important; border-right: none !important; border-top: 1px solid #262626 !important; }
+      .iv-stage img { width: 100% !important; height: auto !important; object-fit: contain !important; max-height: 70vh !important; }
+      .iv-navZone { width: 72px !important; }
+      .iv-countBadge { left: 10px !important; top: 10px !important; }
+    }
+    @media (max-width: 640px) {
+      .iv-navZone { display: none !important; } /* prevent paddles covering the image on tiny screens */
+      .iv-stageWrap { max-height: 65vh !important; }
+      .iv-countBadge { left: 8px !important; top: 8px !important; }
+    }
+  `;
+
   return createPortal(
     <>
-      <div style={overlay} onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>
+      <div
+        style={overlay}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Gallery Manager"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose?.();
+        }}
+      >
         <div style={frame} onClick={(e) => e.stopPropagation()}>
           {/* header */}
           <div style={header}>
@@ -293,7 +326,7 @@ export default function GalleryPopup({
 
               <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 <FaFolder />
-                <select value={folder} onChange={(e) => setFolder(e.target.value)} style={select}>
+                <select value={folder} onChange={(e) => setFolder(e.target.value)} style={select} aria-label="Select folder">
                   {folders.map((f) => (
                     <option key={f} value={f}>
                       {f}
@@ -316,7 +349,7 @@ export default function GalleryPopup({
               <button type="button" onClick={refresh} style={btn} title="Refresh">
                 <FaSyncAlt /> Refresh
               </button>
-              <button type="button" onClick={onClose} style={btn} title="Close">
+              <button type="button" onClick={onClose} style={btn} title="Close gallery">
                 <FaTimes /> Close
               </button>
             </div>
@@ -335,6 +368,7 @@ export default function GalleryPopup({
                   }}
                   role="button"
                   tabIndex={0}
+                  aria-label="Open image"
                 >
                   <img
                     src={imgSrc(im)}
@@ -364,6 +398,9 @@ export default function GalleryPopup({
         </div>
       </div>
 
+      {/* Force mobile behavior for the viewer regardless of any parent styles */}
+      <style>{viewerMobileCss}</style>
+
       {/* Individual viewer from inside manager */}
       {viewerIdx !== null && (
         <ImagePopupViewer
@@ -375,7 +412,9 @@ export default function GalleryPopup({
           updateGalleryImage={(updated) => {
             if (!updated) return;
             setImages((curr) =>
-              curr.map((im) => ((im._id || im.id) === (updated._id || updated.id) ? { ...im, ...updated } : im))
+              curr.map((im) =>
+                (im._id || im.id) === (updated._id || updated.id) ? { ...im, ...updated } : im
+              )
             );
           }}
         />
