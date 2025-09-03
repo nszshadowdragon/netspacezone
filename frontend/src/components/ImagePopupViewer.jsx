@@ -245,7 +245,7 @@ export default function ImagePopupViewer({
   const when = timeago(current?.createdAt);
 
   /* ---------------- layout & styles ---------------- */
-  // Always desktop: [meta | stage]
+  // Desktop: grid [meta | stage]
   // Mobile: stack ["stage", "meta"] (image on top)
   const overlay = {
     position: "fixed",
@@ -275,16 +275,25 @@ export default function ImagePopupViewer({
     gridTemplateAreas: `"meta stage"`,
     columnGap: 12,
   };
+
+  // UPDATED: stronger mobile layout to guarantee image on top and visible
   const responsive = `
     @media (max-width: 980px) {
       .iv-frame      { grid-template-columns: 1fr; grid-template-areas: "stage" "meta"; height: auto; max-height: 100vh; }
-      .iv-stageWrap  { max-height: 60vh; }  /* image ON TOP */
-      .iv-stage      { height: 100%; }
-      .iv-meta       { border-right: none; border-top: 1px solid #262626; }
+      .iv-stageWrap  { max-height: 70vh; }
+      .iv-stage      { height: auto; }
+      .iv-stage img  { width: 100%; height: auto; max-height: 70vh; object-fit: contain; }
+      .iv-meta       { border-right: none; border-top: 1px solid #262626; max-height: none; }
       .iv-navZone    { width: 72px; }
       .iv-countBadge { left: 10px !important; top: 10px !important; }
     }
+    @media (max-width: 640px) {
+      .iv-stageWrap  { max-height: 65vh; }
+      .iv-navZone    { display: none; } /* prevent paddles from covering image on very small screens */
+      .iv-countBadge { left: 8px !important; top: 8px !important; }
+    }
   `;
+
   const header = {
     position: "absolute",
     top: 8,
@@ -379,37 +388,6 @@ export default function ImagePopupViewer({
   const menu = { position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 20, background: "#0b0b0b", border: "1px solid #262626", borderRadius: 10, minWidth: 220, boxShadow: "0 8px 24px rgba(0,0,0,.5)", overflow: "hidden" };
   const item = { display: "block", width: "100%", textAlign: "left", padding: "10px 12px", color: "#ddd", background: "transparent", border: "none", cursor: "pointer" };
   const itemDanger = { ...item, color: "#f87171" };
-
-  /* ---------------- UI ---------------- */
-  const [copied, setCopied] = useState(false);
-  async function copyShare() {
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set("image", idOf(current));
-      await navigator.clipboard.writeText(url.toString());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {}
-  }
-  function openDeleteConfirm() { setMenuOpen(false); setConfirmOpen(true); }
-  async function confirmDelete() {
-    if (!current || deleting) return;
-    const filename = current.filename || idOf(current);
-    setDeleting(true);
-    try { await deleteImageReq({ ownerId, filename }); setConfirmOpen(false); cleanUrlAndClose(); }
-    catch (e) { setConfirmOpen(false); alert(`Delete failed: ${e?.message || e}`); }
-    finally { if (mountedRef.current) setDeleting(false); }
-  }
-  function cancelDelete() { setConfirmOpen(false); }
-
-  // confirm modal styles
-  const modalOverlay = { position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12 };
-  const modalCard = { width: "min(480px, 92vw)", background: "#0b0b0b", border: "1px solid #2d2d2d", borderRadius: 14, boxShadow: "0 10px 40px rgba(0,0,0,.55)", padding: 16, color: "#eee" };
-  const modalTitle = { fontWeight: 900, color: "#fff", marginBottom: 8 };
-  const modalText = { color: "#bbb", marginBottom: 14 };
-  const modalRow = { display: "flex", gap: 10, justifyContent: "flex-end" };
-  const modalBtn = { border: "1px solid #2d2d2d", background: "#1a1a1a", color: ACCENT, borderRadius: 10, padding: "8px 12px", fontWeight: 800 };
-  const modalBtnDanger = { ...modalBtn, background: "#3a0d0d", borderColor: "#7f1d1d", color: "#fca5a5" };
 
   return (
     <div role="dialog" aria-modal="true" style={overlay} onClick={(e) => { if (e.target === e.currentTarget) cleanUrlAndClose(); }}>
