@@ -15,21 +15,66 @@ function apiBase() {
   const h = window.location.hostname;
   return h === "localhost" || h === "127.0.0.1" ? "http://localhost:5000" : "";
 }
+
+/** fetch with timeout so UI never “hangs” */
+async function fetchWithTimeout(url, opts = {}, timeoutMs = 8000) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...opts, signal: ctrl.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 async function patchImage({ ownerId, filename, body }) {
-  const res = await fetch(`${apiBase()}/api/gallery/${encodeURIComponent(filename)}`, {
-    method: "PATCH",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accountId: ownerId, ...body }),
-  });
+  const res = await fetchWithTimeout(
+    `${apiBase()}/api/gallery/${encodeURIComponent(filename)}`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId: ownerId, ...body }),
+    }
+  );
   if (!res.ok) throw new Error(await res.text().catch(() => "Failed to save"));
   try { return await res.json(); } catch { return null; }
 }
-async function deleteImageReq({ ownerId, filename }) {
-  const url = `${apiBase()}/api/gallery/${encodeURIComponent(filename)}?accountId=${encodeURIComponent(ownerId)}`;
-  const res = await fetch(url, { method: "DELETE", credentials: "include" });
-  if (!res.ok) throw new Error(await res.text().catch(() => "Failed to delete"));
+
+/** Robust delete: try id, then basename(filename), then full filename. Retry once. */
+async function deleteByKey(ownerId, key) {
+  const url = `${apiBase()}/api/gallery/${encodeURIComponent(key)}?accountId=${encodeURIComponent(ownerId)}`;
+  const res = await fetchWithTimeout(url, { method: "DELETE", credentials: "include" }, 8000);
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${res.statusText} ${t.slice(0,120)}`);
+  }
   return true;
+}
+function pickDeleteKeys(im) {
+  const keys = [];
+  const id = im?._id || im?.id;
+  const filename = im?.filename || im?.path || im?.url || im?.src || "";
+  if (id) keys.push(String(id));
+  if (filename) {
+    const base = String(filename).split("/").pop();
+    if (base && !keys.includes(base)) keys.push(base);
+    if (filename && !keys.includes(filename)) keys.push(String(filename));
+  }
+  return keys.filter(Boolean);
+}
+async function deleteImageSmart({ ownerId, image }) {
+  let lastErr = "";
+  const keys = pickDeleteKeys(image);
+  for (const k of keys) {
+    try { return await deleteByKey(ownerId, k); }
+    catch (e) { lastErr = String(e?.message || e) || lastErr; }
+  }
+  await new Promise(r => setTimeout(r, 250));
+  try { if (keys[0]) return await deleteByKey(ownerId, keys[0]); }
+  catch (e) { lastErr = String(e?.message || e) || lastErr; }
+  throw new Error(lastErr || "Delete failed");
 }
 
 /* ---------------- helpers ---------------- */
@@ -59,7 +104,7 @@ function buildSrc(x, host = "") {
   return `/${p}`;
 }
 function pickAvatar(u) {
-  if (!u) return "";
+  if (!u) return u;
   return (
     u.profilePic || u.profileImage || u.avatar || u.avatarUrl ||
     u.photoUrl || u.photoURL || u.picture || ""
@@ -75,30 +120,38 @@ export default function ImagePopupViewer({
   updateGalleryImage,
   ownerId,
   fileHost = "",
+  onAfterDelete,            // optional parent callback
 }) {
   const { user } = useAuth();
   const meId = useMemo(() => valId(user), [user]);
 
-  const [idx, setIdx] = useState(Math.max(0, Math.min(popupIndex, images.length - 1)));
-  const current = images[idx] || null;
+  // Broadcast for other components/tabs
+  const bcRef = useRef(null);
+  useEffect(() => {
+    try { if ("BroadcastChannel" in window) bcRef.current = new BroadcastChannel("nsz:gallery"); } catch {}
+    return () => { try { bcRef.current?.close(); } catch {} };
+  }, []);
+  const broadcast = (msg) => { try { bcRef.current?.postMessage?.(msg); } catch {} };
+
+  // Optimistic hide when deleting
+  const [hiddenIds, setHiddenIds] = useState([]);
+  const visible = useMemo(() => images.filter((im) => !hiddenIds.includes(idOf(im))), [images, hiddenIds]);
+
+  const clamp = (n, max) => Math.max(0, Math.min(n, Math.max(0, max)));
+  const [idx, setIdx] = useState(clamp(popupIndex, (visible.length || 1) - 1));
+  const current = visible[idx] || null;
   const prevExists = idx > 0;
-  const nextExists = idx < images.length - 1;
+  const nextExists = idx < visible.length - 1;
+
+  // snapshot the item being deleted so async ops don’t shift targets
+  const currentRef = useRef(null);
+  useEffect(() => { currentRef.current = current; }, [current]);
+
+  useEffect(() => { setIdx((i) => clamp(i, visible.length - 1)); }, [visible.length]);
 
   // avoid setState after unmount
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
-
-  // keep idx valid if list shrinks after delete
-  useEffect(() => {
-    if (idx >= images.length) {
-      if (images.length === 0) {
-        cleanUrlAndClose();
-      } else {
-        setIdx(images.length - 1);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [images.length]);
 
   // lock background scroll
   useEffect(() => {
@@ -129,22 +182,22 @@ export default function ImagePopupViewer({
     const onKey = (e) => {
       if (e.key === "Escape") { e.preventDefault(); cleanUrlAndClose(); }
       if (e.key === "ArrowLeft" && prevExists) { e.preventDefault(); setIdx((i) => Math.max(0, i - 1)); }
-      if (e.key === "ArrowRight" && nextExists) { e.preventDefault(); setIdx((i) => Math.min(images.length - 1, i + 1)); }
+      if (e.key === "ArrowRight" && nextExists) { e.preventDefault(); setIdx((i) => Math.min(visible.length - 1, i + 1)); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [prevExists, nextExists, images.length]);
+  }, [prevExists, nextExists, visible.length]);
 
   // preload neighbors
   useEffect(() => {
     const preload = (i) => {
-      const im = images[i]; if (!im) return;
+      const im = visible[i]; if (!im) return;
       const s = buildSrc(im, fileHost); if (!s) return;
       const pic = new Image(); pic.src = s;
     };
     if (nextExists) preload(idx + 1);
     if (prevExists) preload(idx - 1);
-  }, [idx, images, prevExists, nextExists, fileHost]);
+  }, [idx, visible, prevExists, nextExists, fileHost]);
 
   // caption + reactions
   const [editing, setEditing] = useState(false);
@@ -238,6 +291,10 @@ export default function ImagePopupViewer({
 
   if (!current) { cleanUrlAndClose(); return null; }
 
+  // 🔧 Safety reset: whenever we change to a new current image, ensure deleting is false
+  const [deleting, setDeleting] = useState(false);
+  useEffect(() => { setDeleting(false); setConfirmOpen(false); }, [current && idOf(current)]); // reset latch on image change
+
   const src = buildSrc(current, fileHost);
   const ownerUser = current?.user || current?.owner || {};
   const ownerName = ownerUser?.username || ownerUser?.name || "User";
@@ -245,8 +302,8 @@ export default function ImagePopupViewer({
   const when = timeago(current?.createdAt);
 
   /* ---------------- layout & styles ---------------- */
-  // Desktop: grid [meta | stage]
-  // Mobile: stack ["stage", "meta"] (image on top)
+  // Desktop/Tablet (≥1024px): grid [meta | stage]
+  // Mobile (<1024px): stack ["stage", "meta"] (image on top)
   const overlay = {
     position: "fixed",
     inset: 0,
@@ -276,9 +333,8 @@ export default function ImagePopupViewer({
     columnGap: 12,
   };
 
-  // UPDATED: stronger mobile layout to guarantee image on top and visible
   const responsive = `
-    @media (max-width: 980px) {
+    @media (max-width: 1024px) {
       .iv-frame      { grid-template-columns: 1fr; grid-template-areas: "stage" "meta"; height: auto; max-height: 100vh; }
       .iv-stageWrap  { max-height: 70vh; }
       .iv-stage      { height: auto; }
@@ -289,7 +345,7 @@ export default function ImagePopupViewer({
     }
     @media (max-width: 640px) {
       .iv-stageWrap  { max-height: 65vh; }
-      .iv-navZone    { display: none; } /* prevent paddles from covering image on very small screens */
+      .iv-navZone    { display: none; }
       .iv-countBadge { left: 8px !important; top: 8px !important; }
     }
   `;
@@ -314,7 +370,7 @@ export default function ImagePopupViewer({
     cursor: "pointer",
   };
 
-  // Image (grid area 'stage') — keep DOM order first so it's above on mobile
+  // Image (grid area 'stage')
   const stageWrap = { gridArea: "stage", position: "relative", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" };
   const stage = { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" };
   const media = { maxWidth: "100%", maxHeight: `calc(100% - ${HEADER_H}px)`, objectFit: "contain", display: "block" };
@@ -371,23 +427,115 @@ export default function ImagePopupViewer({
   const editRow = { display: "flex", gap: 8, marginTop: 8 };
   const editBtn = { border: "1px solid #2d2d2d", background: "#1a1a1a", color: ACCENT, borderRadius: 10, padding: "8px 12px", fontWeight: 800 };
 
-  // 3-dot menu + delete confirm modal
+  // actions menu + confirm modal
   const [menuOpen, setMenuOpen] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const menuRef = useRef(null);
+  const menuWrapRef = useRef(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0, minWidth: 220 });
 
   useEffect(() => {
-    const onDoc = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    function place() {
+      if (!menuWrapRef.current) return;
+      const r = menuWrapRef.current.getBoundingClientRect();
+      const width = 240;
+      const top = Math.min(window.innerHeight - 12, r.bottom + 8);
+      const left = Math.min(window.innerWidth - width - 8, Math.max(8, r.right - width));
+      setMenuPos({ top, left, minWidth: width });
+    }
+    if (menuOpen) {
+      place();
+      window.addEventListener("resize", place);
+      window.addEventListener("scroll", place, true);
+      return () => {
+        window.removeEventListener("resize", place);
+        window.removeEventListener("scroll", place, true);
+      };
+    }
+  }, [menuOpen]);
+
+  useEffect(() => {
+    const onDoc = (e) => { if (menuWrapRef.current && !menuWrapRef.current.contains(e.target)) setMenuOpen(false); };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
   const actionsIconBtn = { width: 36, height: 32, display: "grid", placeItems: "center", border: "1px solid #2d2d2d", background: "#121212", color: ACCENT, borderRadius: 8, fontSize: 18, lineHeight: 1, cursor: "pointer" };
-  const menu = { position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 20, background: "#0b0b0b", border: "1px solid #262626", borderRadius: 10, minWidth: 220, boxShadow: "0 8px 24px rgba(0,0,0,.5)", overflow: "hidden" };
+  const menuPanel = {
+    position: "fixed",
+    top: menuPos.top, left: menuPos.left, minWidth: menuPos.minWidth,
+    zIndex: 10050,
+    background: "#0b0b0b",
+    border: "1px solid #262626",
+    borderRadius: 10,
+    boxShadow: "0 12px 28px rgba(0,0,0,.6)",
+    overflow: "hidden",
+    maxHeight: "min(60vh, 420px)",
+    display: "flex",
+    flexDirection: "column",
+  };
   const item = { display: "block", width: "100%", textAlign: "left", padding: "10px 12px", color: "#ddd", background: "transparent", border: "none", cursor: "pointer" };
-  const itemDanger = { ...item, color: "#f87171" };
+  const itemDanger = { ...item, color: "#f87171", fontWeight: 800, position: "sticky", top: 0, background: "#0b0b0b" };
+
+  const [copied, setCopied] = useState(false);
+  function copyShare() {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("image", idOf(current));
+      navigator.clipboard?.writeText(url.toString());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  }
+  function openDeleteConfirm() {
+    setMenuOpen(false);
+    // explicit reset in case a prior delete left a stale flag
+    setDeleting(false);
+    setConfirmOpen(true);
+  }
+  function cancelDelete() { if (!deleting) setConfirmOpen(false); }
+
+  // DELETE: close dialog immediately, robust server delete, advance next/prev, notify parents
+  async function confirmDelete() {
+    const snapshot = currentRef.current;
+    if (!snapshot || deleting) return;
+    const deleteId = idOf(snapshot);
+
+    // Decide landing target before hide (based on *current* visible list)
+    const nextIdx = idx < visible.length - 1 ? idx : (idx > 0 ? idx - 1 : null);
+
+    // Optimistic hide & advance
+    setHiddenIds((h) => (h.includes(deleteId) ? h : [...h, deleteId]));
+    if (nextIdx !== null) setIdx(nextIdx);
+
+    // Hide confirm instantly, then process
+    setConfirmOpen(false);
+    setDeleting(true);
+
+    try {
+      await deleteImageSmart({ ownerId, image: snapshot });
+
+      // Notify parent + events
+      onAfterDelete?.(String(deleteId));
+      broadcast({ type: "gallery:deleted", ownerId: String(ownerId), imageId: String(deleteId) });
+      try {
+        window.dispatchEvent(new CustomEvent("nsz:gallery", { detail: { type: "gallery:deleted", ownerId: String(ownerId), imageId: String(deleteId) } }));
+      } catch {}
+
+      if (nextIdx === null) cleanUrlAndClose();
+    } catch (e) {
+      // Undo optimistic hide on failure
+      setHiddenIds((h) => h.filter((id) => id !== deleteId));
+    } finally {
+      if (mountedRef.current) setDeleting(false);
+    }
+  }
+
+  // modal styles
+  const modalOverlay = { position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", zIndex: 10000 };
+  const modalCard = { background: "#0b0b0b", border: "1px solid #262626", borderRadius: 12, padding: 16, width: "min(420px, 92vw)", boxShadow: "0 10px 30px rgba(0,0,0,.6)" };
+  const modalBtn = { border: "1px solid #2d2d2d", background: "#111", color: "#ddd", borderRadius: 10, padding: "8px 12px", fontWeight: 800 };
+  const modalBtnDanger = { ...modalBtn, color: "#f87171", borderColor: "#3a1a1a", background: "#1a0f0f" };
 
   return (
     <div role="dialog" aria-modal="true" style={overlay} onClick={(e) => { if (e.target === e.currentTarget) cleanUrlAndClose(); }}>
@@ -399,25 +547,25 @@ export default function ImagePopupViewer({
           <button onClick={cleanUrlAndClose} style={closeBtn} aria-label="Close image">✕</button>
         </div>
 
-        {/* IMAGE first in DOM so it appears on top on mobile */}
+        {/* IMAGE (right on desktop, top on mobile) */}
         <div className="iv-stageWrap" style={stageWrap}>
-          <div className="iv-countBadge" style={countBadge}>{images.length ? `${idx + 1} / ${images.length}` : ""}</div>
+          <div className="iv-countBadge" style={countBadge}>{visible.length ? `${idx + 1} / ${visible.length}` : ""}</div>
           <div className="iv-stage" style={stage}>
             {prevExists && (
               <div className="iv-navZone" style={navZone("left")} onClick={() => setIdx((i) => Math.max(0, i - 1))} aria-label="Previous image">
                 <div style={navBtn}>‹</div>
               </div>
             )}
-            <img src={buildSrc(current, fileHost)} alt={current?.caption || ""} style={media} />
+            <img src={src} alt={current?.caption || ""} style={media} />
             {nextExists && (
-              <div className="iv-navZone" style={navZone("right")} onClick={() => setIdx((i) => Math.min(images.length - 1, i + 1))} aria-label="Next image">
+              <div className="iv-navZone" style={navZone("right")} onClick={() => setIdx((i) => Math.min(visible.length - 1, i + 1))} aria-label="Next image">
                 <div style={navBtn}>›</div>
               </div>
             )}
           </div>
         </div>
 
-        {/* META second in DOM (left on desktop, below on mobile) */}
+        {/* META (left on desktop, below on mobile) */}
         <aside className="iv-meta" style={side}>
           <div style={topRow}>
             <div style={userWrap}>
@@ -433,14 +581,18 @@ export default function ImagePopupViewer({
               </div>
             </div>
 
-            <div ref={menuRef} style={{ position: "relative" }}>
+            {/* actions */}
+            <div ref={menuWrapRef} style={{ position: "relative" }}>
               <button style={actionsIconBtn} onClick={() => setMenuOpen((v) => !v)} aria-label="More actions">⋯</button>
               {menuOpen && (
-                <div style={menu}>
-                  {!editing && <button style={item} onClick={() => { setMenuOpen(false); setEditing(true); }}>✎ Edit caption</button>}
-                  <button style={item} onClick={() => { setMenuOpen(false); setShowInfo((v) => !v); }}>{showInfo ? "Hide info" : "Show info"}</button>
-                  <button style={item} onClick={() => { setMenuOpen(false); copyShare(); }}>{copied ? "✓ Link copied" : "🔗 Share link"}</button>
-                  <button style={itemDanger} onClick={openDeleteConfirm} disabled={deleting}>🗑 Delete image</button>
+                <div style={menuPanel} role="menu" aria-label="Image actions">
+                  {/* DELETE stays visible at all times */}
+                  <button style={itemDanger} onClick={openDeleteConfirm}>🗑 Delete image</button>
+                  <div style={{ overflowY: "auto" }}>
+                    {!editing && <button style={item} onClick={() => { setMenuOpen(false); setEditing(true); }}>✎ Edit caption</button>}
+                    <button style={item} onClick={() => { setMenuOpen(false); setShowInfo((v) => !v); }}>{showInfo ? "Hide info" : "Show info"}</button>
+                    <button style={item} onClick={() => { setMenuOpen(false); copyShare(); }}>{copied ? "✓ Link copied" : "🔗 Share link"}</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -477,14 +629,14 @@ export default function ImagePopupViewer({
         </aside>
       </div>
 
-      {/* Confirm delete modal */}
+      {/* Confirm delete modal (always renders when confirmOpen) */}
       {confirmOpen && (
-        <div role="dialog" aria-modal="true" style={modalOverlay} onKeyDown={(e) => { if (e.key === "Escape") cancelDelete(); if (e.key === "Enter") confirmDelete(); }}>
+        <div role="dialog" aria-modal="true" style={modalOverlay} onKeyDown={(e) => { if (e.key === "Escape" && !deleting) cancelDelete(); if (e.key === "Enter") confirmDelete(); }}>
           <div style={modalCard} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontWeight: 900, color: "#fff", marginBottom: 8 }}>Delete image?</div>
             <div style={{ color: "#bbb", marginBottom: 14 }}>This action cannot be undone.</div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button style={modalBtn} onClick={cancelDelete} autoFocus>Cancel</button>
+              <button style={modalBtn} onClick={cancelDelete} disabled={deleting} autoFocus>Cancel</button>
               <button style={modalBtnDanger} onClick={confirmDelete} disabled={deleting}>{deleting ? "Deleting…" : "Delete"}</button>
             </div>
           </div>

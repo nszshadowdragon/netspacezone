@@ -62,7 +62,6 @@ const ENDPOINTS = {
 async function toJsonSafe(res) { try { return await res.json(); } catch { return null; } }
 function cacheKey(ownerId) { return `nsz.gallery.ep.${HOST_TAG}.${ownerId}`; }
 
-/** Keep a tiny “discovery” cache (URLs are fixed now, but this preserves your shape) */
 async function discoverEndpoints(ownerId) {
   const cachedRaw = localStorage.getItem(cacheKey(ownerId));
   if (cachedRaw) { try { const cached = JSON.parse(cachedRaw); if (cached?.list) return cached; } catch {} }
@@ -131,11 +130,42 @@ export default function ImageGallery({
   const clearBanner = () => setBanner({ type: "", msg: "" });
 
   const [ep, setEp] = useState(null);
-  const bc = useBroadcast("nsz:gallery", (msg) => {
-    if (msg?.type?.startsWith("gallery:") && msg.ownerId === ownerId) refreshAll();
-  });
 
-  // discover (writes fixed endpoints to cache); then load
+  /* ---------- Message handler used by BOTH BroadcastChannel and CustomEvent ---------- */
+  const handleMsg = useCallback((msg) => {
+    if (!msg) return;
+    const sameOwner = String(msg.ownerId ?? "") === String(ownerId ?? "");
+    if (!sameOwner) return;
+
+    // Immediate local prune for deletes (handles the "last image" case)
+    if (msg.type === "gallery:deleted" && msg.imageId) {
+      setImages((curr) => curr.filter((im) => idOf(im) !== String(msg.imageId)));
+      // Soft refresh to sync order/other tabs
+      setTimeout(() => { try { refreshAll(); } catch {} }, 250);
+      return;
+    }
+
+    if (msg.type === "gallery:upload") {
+      refreshAll();
+      return;
+    }
+
+    if (String(msg.type || "").startsWith("gallery:")) {
+      refreshAll();
+    }
+  }, [ownerId]); // refreshAll defined below but stable by usage
+
+  // 🔔 Broadcast listener (cross-tab / cross-component)
+  const bc = useBroadcast("nsz:gallery", (msg) => handleMsg(msg));
+
+  // 🔔 Window CustomEvent fallback (same-tab reliable delivery)
+  useEffect(() => {
+    const onCustom = (e) => handleMsg(e?.detail);
+    window.addEventListener("nsz:gallery", onCustom);
+    return () => window.removeEventListener("nsz:gallery", onCustom);
+  }, [handleMsg]);
+
+  // discover endpoints; then load
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -170,14 +200,9 @@ export default function ImageGallery({
       const updated = evt?.payload || evt;
       if (!updated) return refreshAll();
       const id = idOf(updated);
-      setImages((curr) => {
-        let found = false;
-        const next = curr.map((im) => {
-          if (idOf(im) === id) { found = true; return { ...im, ...updated }; }
-          return im;
-        });
-        return found ? next : [updated, ...next];
-      });
+      setImages((curr) =>
+        curr.map((im) => (idOf(im) === id ? { ...im, ...updated } : im))
+      );
     };
     const onReordered = () => refreshAll();
 
@@ -377,7 +402,6 @@ export default function ImageGallery({
             </div>
           )}
 
-          {/* Single launcher for full manager */}
           <button
             type="button"
             onClick={openManager}
@@ -406,7 +430,6 @@ export default function ImageGallery({
                       {...dragProvided.draggableProps}
                       style={{ ...item, ...(dragProvided.draggableProps.style || {}) }}
                     >
-                      {/* Drag via small grip only */}
                       {isOwner && (
                         <div
                           {...dragProvided.dragHandleProps}
@@ -418,7 +441,6 @@ export default function ImageGallery({
                         </div>
                       )}
 
-                      {/* Tile opens the individual image viewer */}
                       <div
                         role="button"
                         tabIndex={0}
@@ -461,24 +483,57 @@ export default function ImageGallery({
         />
       )}
 
-      {/* Individual viewer (exclusive) */}
+      {/* Viewer modal (exclusive) */}
       {mode === "viewer" && viewerIndex !== null &&
         createPortal(
-          <ImagePopupViewer
-            ownerId={ownerId}
-            fileHost={FILE_HOST}
-            images={filtered}
-            popupIndex={viewerIndex}
-            closePopup={closeViewer}
-            updateGalleryImage={(updated) => {
-              if (!updated) return;
-              setImages((curr) =>
-                curr.map((im) =>
-                  (idOf(im) === idOf(updated) ? { ...im, ...updated } : im)
-                )
-              );
-            }}
-          />,
+          <>
+            <ImagePopupViewer
+              ownerId={ownerId}
+              fileHost={FILE_HOST}
+              images={filtered}
+              popupIndex={viewerIndex}
+              closePopup={closeViewer}
+              updateGalleryImage={(updated) => {
+                if (!updated) return;
+                setImages((curr) =>
+                  curr.map((im) =>
+                    (idOf(im) === idOf(updated) ? { ...im, ...updated } : im)
+                  )
+                );
+              }}
+            />
+            {/* Scoped safety net for phones: image on top, meta below */}
+            <style>{`
+              @media (max-width: 1024px) {
+                .iv-frame {
+                  display: grid !important;
+                  grid-template-columns: 1fr !important;
+                  grid-template-areas: "stage" "meta" !important;
+                  height: auto !important;
+                  max-height: 100vh !important;
+                }
+                .iv-stageWrap { grid-area: stage !important; }
+                .iv-meta {
+                  grid-area: meta !important;
+                  border-right: none !important;
+                  border-top: 1px solid #262626 !important;
+                }
+                .iv-stage img {
+                  width: 100% !important;
+                  height: auto !important;
+                  object-fit: contain !important;
+                  max-height: 70vh !important;
+                }
+                .iv-navZone { width: 72px !important; }
+                .iv-countBadge { left: 10px !important; top: 10px !important; }
+              }
+              @media (max-width: 640px) {
+                .iv-navZone { display: none !important; }
+                .iv-stageWrap { max-height: 65vh !important; }
+                .iv-countBadge { left: 8px !important; top: 8px !important; }
+              }
+            `}</style>
+          </>,
           document.body
         )
       }

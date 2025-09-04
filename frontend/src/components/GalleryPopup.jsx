@@ -16,23 +16,18 @@ const isLocal = (() => {
     return true;
   }
 })();
-
-// If VITE_API_BASE is missing in prod, fall back to the API subdomain.
-// In local dev, keep it blank so fetch("/api/...") hits Vite proxy/same-origin.
 const API_FALLBACK = isLocal ? "" : "https://api.netspacezone.com";
 const API_BASE = (env.VITE_API_BASE || API_FALLBACK).replace(/\/$/, "");
-
-// Use the API host for serving /uploads in prod; localhost:5000 in dev.
 const FILE_HOST = API_BASE || (isLocal ? "http://localhost:5000" : "https://api.netspacezone.com");
 
 const api = (path, opts = {}) =>
   fetch(`${API_BASE}${path}`, { credentials: "include", ...opts });
 
-/* -------------------- canonical endpoints only -------------------- */
+/* -------------------- canonical endpoints -------------------- */
 const ENDPOINTS = {
-  list: (ownerId) => `/api/gallery?accountId=${ownerId}`,
-  folders: (ownerId) => `/api/gallery/folders?accountId=${ownerId}`,
-  upload: { path: `/api/gallery`, field: "image" }, // POST multipart
+  list:     (ownerId) => `/api/gallery?accountId=${ownerId}`,
+  folders:  (ownerId) => `/api/gallery/folders?accountId=${ownerId}`,
+  upload:   { path: `/api/gallery`, field: "image" }, // POST multipart
 };
 
 /* -------------------- helpers -------------------- */
@@ -45,6 +40,10 @@ function imgSrc(x) {
   if (p.startsWith?.("/uploads/")) return `${FILE_HOST}${p}`;
   if (p.startsWith?.("/")) return p;
   return `/${p}`;
+}
+function filterAndSort(images, folder) {
+  const base = folder && folder !== "All" ? images.filter((i) => (i.folder || "All") === folder) : images;
+  return [...base].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 }
 
 /* -------------------- component -------------------- */
@@ -59,19 +58,20 @@ export default function GalleryPopup({
   const [folder, setFolder] = useState(initialFolder || "All");
   const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [viewerIdx, setViewerIdx] = useState(null);
 
-  // lock background scroll while open
+  // viewer index within the *filtered* list
+  const [viewerIdx, setViewerIdx] = useState(null);
+  // bump this to remount viewer when the filtered list changes (e.g., on delete)
+  const [viewerKey, setViewerKey] = useState(0);
+
+  // lock background scroll while this modal is open
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
+    return () => { document.body.style.overflow = prev; };
   }, [open]);
 
-  // load folders + images
   const refresh = useCallback(async () => {
     if (!open || !ownerId) return;
     setLoading(true);
@@ -82,15 +82,14 @@ export default function GalleryPopup({
         if (rf.ok) {
           const j = await rf.json().catch(() => null);
           const arr = Array.isArray(j) ? j : Array.isArray(j?.folders) ? j.folders : [];
-          // Keep only user-created folders; strip "root" and duplicates
           const extra = (arr || [])
             .filter((f) => f && f !== "All" && String(f).toLowerCase() !== "root");
           setFolders(["All", ...Array.from(new Set(extra))]);
         } else {
-          setFolders(["All"]);
+          setFolders((f) => f.length ? f : ["All"]);
         }
       } catch {
-        setFolders(["All"]);
+        setFolders((f) => f.length ? f : ["All"]);
       }
 
       // images
@@ -111,7 +110,7 @@ export default function GalleryPopup({
     if (open) refresh();
   }, [open, ownerId, refresh]);
 
-  // realtime sync
+  // realtime sync + deletion-aware viewer continuity
   useEffect(() => {
     if (!open || !ownerId) return;
     connectSocket();
@@ -122,12 +121,37 @@ export default function GalleryPopup({
       if (!im) return refresh();
       setImages((curr) => [im, ...curr]);
     };
+
     const onDeleted = (evt) => {
       const im = evt?.payload || evt;
-      const id = idOf(im);
-      if (!id) return refresh();
-      setImages((curr) => curr.filter((x) => idOf(x) !== id));
+      const delId = idOf(im);
+      if (!delId) return refresh();
+
+      setImages((curr) => {
+        // compute filtered lists before & after to keep viewer on next/prev item
+        const prevFiltered = filterAndSort(curr, folder);
+        const prevIdxInFiltered = prevFiltered.findIndex((x) => idOf(x) === delId);
+
+        const nextCurr = curr.filter((x) => idOf(x) !== delId);
+        const nextFiltered = filterAndSort(nextCurr, folder);
+
+        // If viewer was open and the deleted image was visible in this folder
+        if (viewerIdx !== null && prevIdxInFiltered !== -1) {
+          if (nextFiltered.length > 0) {
+            const nextIdx = Math.min(viewerIdx, nextFiltered.length - 1);
+            // remount viewer on new index so it doesn't “white screen”
+            setViewerIdx(nextIdx);
+            setViewerKey((k) => k + 1);
+          } else {
+            // nothing left—close the viewer
+            setViewerIdx(null);
+          }
+        }
+
+        return nextCurr;
+      });
     };
+
     const onUpdated = (evt) => {
       const im = evt?.payload || evt;
       if (!im) return refresh();
@@ -135,10 +159,7 @@ export default function GalleryPopup({
       setImages((curr) => {
         let found = false;
         const next = curr.map((x) => {
-          if (idOf(x) === id) {
-            found = true;
-            return { ...x, ...im };
-          }
+          if (idOf(x) === id) { found = true; return { ...x, ...im }; }
           return x;
         });
         return found ? next : [im, ...next];
@@ -155,12 +176,13 @@ export default function GalleryPopup({
       socket.off("gallery:image:updated", onUpdated);
       leaveGallery(String(ownerId));
     };
-  }, [open, ownerId, refresh]);
+  }, [open, ownerId, folder, viewerIdx]);
 
   // upload
   const onDrop = useCallback(
     async (accepted) => {
       if (!canEdit || !accepted?.length) return;
+
       for (const f of accepted) {
         if (f.size > 20 * 1024 * 1024) continue;
 
@@ -184,6 +206,7 @@ export default function GalleryPopup({
           console.warn("Upload error:", e?.message || e);
         }
       }
+
       refresh();
     },
     [canEdit, ownerId, folder, refresh]
@@ -198,10 +221,7 @@ export default function GalleryPopup({
     disabled: !canEdit || !ownerId,
   });
 
-  const filtered = useMemo(() => {
-    const list = folder === "All" ? images : images.filter((i) => (i.folder || "All") === folder);
-    return [...list].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-  }, [images, folder]);
+  const filtered = useMemo(() => filterAndSort(images, folder), [images, folder]);
 
   if (!open) return null;
 
@@ -219,6 +239,7 @@ export default function GalleryPopup({
     paddingRight: `max(${GAP}px, env(safe-area-inset-right))`,
     paddingBottom: `max(${GAP}px, env(safe-area-inset-bottom))`,
     paddingLeft: `max(${GAP}px, env(safe-area-inset-left))`,
+    isolation: "isolate",
   };
   const frame = {
     width: "min(1400px, 100%)",
@@ -283,10 +304,9 @@ export default function GalleryPopup({
   };
 
   // Component-scoped CSS that enforces the mobile layout for ImagePopupViewer.
-  // This ensures that on small screens the image is on top and the meta panel is below,
-  // even if parent containers elsewhere use flex/grid that would otherwise interfere.
+  // ≥1024px: meta left, image right; <1024px: image on top, meta below.
   const viewerMobileCss = `
-    @media (max-width: 980px) {
+    @media (max-width: 1024px) {
       .iv-frame {
         display: grid !important;
         grid-template-columns: 1fr !important;
@@ -402,8 +422,9 @@ export default function GalleryPopup({
       <style>{viewerMobileCss}</style>
 
       {/* Individual viewer from inside manager */}
-      {viewerIdx !== null && (
+      {viewerIdx !== null && filtered.length > 0 && (
         <ImagePopupViewer
+          key={viewerKey}              // remount on deletes so we land on next/prev
           ownerId={ownerId}
           fileHost={FILE_HOST}
           images={filtered}
@@ -413,8 +434,8 @@ export default function GalleryPopup({
             if (!updated) return;
             setImages((curr) =>
               curr.map((im) =>
-                (im._id || im.id) === (updated._id || updated.id) ? { ...im, ...updated } : im
-              )
+                (idOf(im) === idOf(updated) ? { ...im, ...updated } : im
+              ))
             );
           }}
         />
