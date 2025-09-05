@@ -19,34 +19,47 @@ const ALLOWED_THEMES = new Set(['light', 'normal1', 'normal2', 'dark']);
 const sanitizeTheme = (t) => (ALLOWED_THEMES.has(String(t)) ? String(t) : null);
 const escapeRx = (s='') => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Build a public absolute URL for a stored pic path.
- *  - If UPLOADS_PUBLIC_BASE is set, use that (recommended).
- *  - Else, when running locally (request host is localhost), use your prod API host.
- *  - Else (in prod), use the current request host.
- */
-function toPublicUrl(req, raw) {
+function normalizeUploadsPath(raw) {
   if (!raw) return null;
   let s = String(raw).trim().replace(/\\/g, '/');
 
-  // already absolute or data URI
+  // Already absolute or data URI
   if (/^https?:\/\//i.test(s) || /^data:/i.test(s)) return s;
 
-  // normalize to "/uploads/..."
+  // Normalize to "/uploads/..."
   const low = s.toLowerCase();
   const idx = low.indexOf('/uploads/');
   if (idx >= 0) s = s.slice(idx);
   if (s.startsWith('uploads/')) s = '/' + s;
   if (!s.startsWith('/')) s = '/' + s;
 
-  const host = (req.get('host') || '').toLowerCase();
-  const isLocal = host.includes('localhost') || host.startsWith('127.0.0.1');
+  return s; // "/uploads/xyz.png"
+}
 
-  const base =
-    (process.env.UPLOADS_PUBLIC_BASE && process.env.UPLOADS_PUBLIC_BASE.trim().replace(/\/+$/, '')) ||
-    // 👇 match your navbar’s prod host when developing locally
-    (isLocal ? 'https://api.netspacezone.com' : `${req.protocol}://${req.get('host')}`);
+/** Build a public absolute URL for a stored pic path with robust base selection. */
+function toPublicUrl(req, raw) {
+  const p = normalizeUploadsPath(raw);
+  if (!p) return null;
 
-  return `${base}${s}`;
+  const trim = (x) => (x || '').toString().trim().replace(/\/+$/,'');
+  const proto = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.get('host') || '';
+  const origin = trim(req.get('origin'));
+  const fwdHost = trim(req.get('x-forwarded-host'));
+
+  const candidates = [
+    trim(process.env.UPLOADS_PUBLIC_BASE),                            // 1) explicit env
+    origin,                                                           // 2) page origin (deployed site)
+    fwdHost ? `${proto}://${fwdHost}` : '',                           // 3) proxy forward host
+    `${proto}://${host}`,                                             // 4) current server host
+    'https://api.netspacezone.com',                                   // 5) safe fallbacks
+    'https://www.netspacezone.com',
+    'https://netspacezone.com',
+  ].filter(Boolean);
+
+  // Pick the first non-empty candidate
+  const base = candidates[0];
+  return `${base}${p}`;
 }
 
 /* ---------------- me ---------------- */
@@ -146,7 +159,7 @@ router.get('/search', requireAuth, async (req, res) => {
         _id: u._id,
         username: u.username,
         fullName: u.fullName || [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username,
-        profileImageUrl: toPublicUrl(req, rawPic), // <-- always absolute (dev uses prod host)
+        profileImageUrl: toPublicUrl(req, rawPic), // always absolute (prod-safe)
         isFriend: meId ? friendSet.has(String(u._id)) : false,
         requestPending: meId ? pendingTo.has(String(u._id)) : false,
       };
