@@ -12,16 +12,6 @@ import socket, { connectSocket, disconnectSocket } from "../socket";
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
-// ----- API base (dev + prod) -----
-function isLocalhost() {
-  const h = window.location.hostname;
-  return h === "localhost" || h === "127.0.0.1";
-}
-function API_BASE() {
-  const env = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
-  return env || (isLocalhost() ? "http://localhost:5000" : "https://api.netspacezone.com");
-}
-
 // Extract user/token from various shapes
 function extractUser(obj) {
   if (!obj) return null;
@@ -47,14 +37,14 @@ export function AuthProvider({ children }) {
       setLoading(true);
       setError("");
       try {
-        const res = await fetch(`${API_BASE()}/api/auth/me`, {
+        const res = await fetch(`/api/auth/me`, {
           method: "GET",
-          credentials: "include",      // <-- send cookie
-          cache: "no-store",           // <-- avoid custom Cache-Control header (preflight-safe)
+          credentials: "include",      // send cookie
+          cache: "no-store",
         });
 
         if (!res.ok) {
-          // 401 means not logged in; that’s fine
+          // 401 = not logged in (fine)
           if (res.status !== 401) {
             try {
               const msg = await res.text();
@@ -84,7 +74,7 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (identifier, password) => {
     setError("");
     const body = { identifier, password };
-    const res = await fetch(`${API_BASE()}/api/auth/login`, {
+    const res = await fetch(`/api/auth/login`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -107,7 +97,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     try {
-      await fetch(`${API_BASE()}/api/auth/logout`, {
+      await fetch(`/api/auth/logout`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

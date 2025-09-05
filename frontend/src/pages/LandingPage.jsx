@@ -3,10 +3,8 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-const API_BASE =
-  import.meta.env.MODE === "production"
-    ? "https://api.netspacezone.com"
-    : (import.meta.env.VITE_API_BASE || "http://localhost:5000");
+// ✅ Simpler base: relative in dev, set VITE_API_BASE_URL in prod if needed
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 const CSS = `
 :root{
@@ -30,14 +28,14 @@ html,body{ background:var(--bg); color:var(--text); }
   background:#101010;
   border-radius:16px;
   overflow:hidden;
-  box-shadow:0 0 24px rgba(250,204,21,.25);
+  box-shadow:0 0 24px rgba(250,204,21,25);
 }
 
 .left{
   padding:clamp(20px,4vw,48px);
   background:
-    radial-gradient(900px 450px at 15% -10%, rgba(0,255,255,.12), transparent 60%),
-    radial-gradient(700px 350px at 110% 10%, rgba(74,0,224,.15), transparent 60%),
+    radial-gradient(900px 450px at 15% -10%, rgba(0,255,255,12), transparent 60%),
+    radial-gradient(700px 350px at 110% 10%, rgba(74,0,224,15), transparent 60%),
     linear-gradient(180deg,#000 0%,#111 100%);
   display:grid; align-content:center; gap:clamp(10px,2vw,16px);
   text-align:center;
@@ -46,7 +44,7 @@ html,body{ background:var(--bg); color:var(--text); }
   width: clamp(140px, 42vw, 220px);
   margin:0 auto 6px;
   display:block;
-  filter: drop-shadow(0 0 24px rgba(0,255,255,.5)) drop-shadow(0 2px 16px rgba(74,0,224,.45));
+  filter: drop-shadow(0 0 24px rgba(0,255,255,5)) drop-shadow(0 2px 16px rgba(74,0,224,45));
   transform: rotate(-6deg);
 }
 .title{ margin:0; font-weight:800; color:var(--gold); font-size:clamp(24px,4.5vw,36px); }
@@ -75,7 +73,7 @@ label{ color:var(--muted); font-size:.95rem; }
 }
 .input:focus-visible{
   border-color:var(--gold);
-  box-shadow:0 0 0 3px rgba(250,204,21,.25);
+  box-shadow:0 0 0 3px rgba(250,204,21,25);
 }
 
 .pw{ position:relative; }

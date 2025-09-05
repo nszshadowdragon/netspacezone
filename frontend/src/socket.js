@@ -1,19 +1,15 @@
 // frontend/src/socket.js
 import { io } from "socket.io-client";
 
-/** Resolve API base */
-function apiBase() {
-  const h = window.location.hostname;
-  const isLocal = h === "localhost" || h === "127.0.0.1";
-  const env = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
-  return env || (isLocal ? "http://localhost:5000" : "https://api.netspacezone.com");
-}
+// In dev, leave blank to use same-origin (Vite proxy handles /socket.io).
+// In prod, set VITE_API_BASE_URL to your backend origin.
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 /** Reuse across HMR and route changes */
 const sock = (() => {
   if (globalThis.__NSZ_SOCKET__) return globalThis.__NSZ_SOCKET__;
 
-  const s = io(apiBase(), {
+  const s = io(API_BASE || undefined, {
     path: "/socket.io",
     withCredentials: true,
     transports: ["websocket"], // prefer WS
@@ -68,7 +64,6 @@ export function leaveRooms({ userId, ownerId, imageId } = {}) {
 }
 
 /* ---------------- Typed convenience wrappers ---------------- */
-
 export const joinPresence = (userId) => joinRooms({ userId });
 export const leavePresence = (userId) => leaveRooms({ userId });
 
@@ -77,12 +72,3 @@ export const leaveGallery = (ownerId) => leaveRooms({ ownerId });
 
 export const joinImage = (imageId) => joinRooms({ imageId });
 export const leaveImage = (imageId) => leaveRooms({ imageId });
-
-/* ---------------- Event names (for reference) ----------------
-Server emits (from server.js):
-- io.to(`user:${userId}`).emit("presence:update", { userId, online, connections, ts })
-- io.to(`gallery:${ownerId}`).emit(`gallery:image:created|updated|deleted`, { ownerId, payload, ts })
-- (optional) io.to(`image:${imageId}`).emit("image:updated", payload)
-
-Client handlers should expect the gallery payload wrapper and unwrap `.payload`.
-----------------------------------------------------------------*/

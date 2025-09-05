@@ -21,9 +21,10 @@ const escapeRegExp = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const isValidEmail = (v = "") => /^\S+@\S+\.\S+$/.test(String(v).trim());
 const isValidUsername = (v = "") => /^[a-zA-Z0-9._-]{3,20}$/.test(String(v).trim());
 
+const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
+
 function signJwt(payload) {
-  const secret = process.env.JWT_SECRET || "dev-secret";
-  return jwt.sign(payload, secret, { expiresIn: "7d" });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
 }
 
 function ensureUploadsDir() {
@@ -40,6 +41,14 @@ function saveBufferToUploads(buffer, originalName) {
   const fullPath = path.join(dir, filename);
   fs.writeFileSync(fullPath, buffer);
   return `/uploads/${filename}`;
+}
+
+// Pull token from Authorization: Bearer <token> or cookie
+function getTokenFromReq(req) {
+  const hdr = req.headers?.authorization || "";
+  if (/^Bearer\s+/i.test(hdr)) return hdr.replace(/^Bearer\s+/i, "").trim();
+  const c = req.cookies || {};
+  return c.token || c.jwt || "";
 }
 
 /* ----------------------------- multer config ---------------------------- */
@@ -140,9 +149,10 @@ router.post("/login", async (req, res) => {
 
     const identLower = String(identifier).trim().toLowerCase();
 
+    // ⬇ ensure password hash is loaded for comparePassword()
     const user = await User.findOne({
       $or: [{ email: identLower }, { username: identLower }],
-    });
+    }).select("+password");
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
     const ok = await user.comparePassword(password);
@@ -178,10 +188,24 @@ router.post("/login", async (req, res) => {
 // GET /api/auth/me
 router.get("/me", verifyToken, async (req, res) => {
   try {
-    const me = await User.findById(req.userId).select("-password");
+    // Fallback if middleware didn't set userId (avoid CastError -> 500)
+    let uid = req.userId;
+    if (!uid) {
+      const token = getTokenFromReq(req);
+      if (!token) return res.status(401).json({ error: "Not authenticated" });
+      const decoded = jwt.verify(token, JWT_SECRET);
+      uid = decoded.id || decoded._id;
+      if (!uid) return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const me = await User.findById(uid).select("-password");
     if (!me) return res.status(401).json({ error: "Not authenticated" });
     res.json({ user: me });
   } catch (err) {
+    // Normalize JWT errors to 401 instead of 500
+    if (err?.name === "JsonWebTokenError" || err?.name === "TokenExpiredError") {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
     console.error("Me error:", err);
     res.status(500).json({ error: "Failed" });
   }
@@ -324,7 +348,8 @@ router.patch("/password", verifyToken, async (req, res) => {
       return res.status(400).json({ error: "Missing currentPassword or newPassword" });
     }
 
-    const user = await User.findById(req.userId);
+    // ⬇ include password hash for comparePassword()
+    const user = await User.findById(req.userId).select("+password");
     if (!user) return res.status(404).json({ error: "User not found" });
 
     const ok = await user.comparePassword(currentPassword);
