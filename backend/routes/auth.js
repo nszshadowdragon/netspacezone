@@ -22,17 +22,9 @@ const isValidEmail = (v = "") => /^\S+@\S+\.\S+$/.test(String(v).trim());
 const isValidUsername = (v = "") => /^[a-zA-Z0-9._-]{3,20}$/.test(String(v).trim());
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
+function signJwt(payload) { return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" }); }
 
-function signJwt(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
-}
-
-function ensureUploadsDir() {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  return UPLOAD_DIR;
-}
-
-// Save a buffer to UPLOAD_DIR and return the public path beginning with /uploads/…
+function ensureUploadsDir() { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); return UPLOAD_DIR; }
 function saveBufferToUploads(buffer, originalName) {
   const dir = ensureUploadsDir();
   const ts = Date.now();
@@ -42,8 +34,6 @@ function saveBufferToUploads(buffer, originalName) {
   fs.writeFileSync(fullPath, buffer);
   return `/uploads/${filename}`;
 }
-
-// Pull token from Authorization: Bearer <token> or cookie
 function getTokenFromReq(req) {
   const hdr = req.headers?.authorization || "";
   if (/^Bearer\s+/i.test(hdr)) return hdr.replace(/^Bearer\s+/i, "").trim();
@@ -51,14 +41,62 @@ function getTokenFromReq(req) {
   return c.token || c.jwt || "";
 }
 
-/* ----------------------------- multer config ---------------------------- */
+/* ---------- avatar -> public URL (same policy as users.js) ---------- */
+function normalizeUploadsPath(raw) {
+  if (!raw) return null;
+  let s = String(raw).trim().replace(/\\/g, "/");
+  if (/^https?:\/\//i.test(s) || /^data:/i.test(s)) return s;
+  const low = s.toLowerCase();
+  const idx = low.indexOf("/uploads/");
+  if (idx >= 0) s = s.slice(idx);
+  if (s.startsWith("uploads/")) s = "/" + s;
+  if (!s.startsWith("/")) s = "/" + s;
+  return s;
+}
+const apexFromHost = (h) => (h || "").replace(/^https?:\/\//i, "").replace(/\/.*$/,"").replace(/^www\./i,"");
+const apiBaseFromHost = (h) => { const apex = apexFromHost(h); return apex ? `https://api.${apex}` : ""; };
+function toPublicUrl(req, raw) {
+  const p = normalizeUploadsPath(raw);
+  if (!p) return null;
+
+  const explicit = (process.env.UPLOADS_PUBLIC_BASE || "").trim().replace(/\/+$/,"");
+  if (explicit) return `${explicit}${p}`;
+
+  const origin = (req.get("origin") || "").trim();
+  if (origin) {
+    try {
+      const u = new URL(origin);
+      const isApi = /^api\./i.test(u.hostname);
+      const base = isApi ? `${u.protocol}//${u.host}` : apiBaseFromHost(u.host);
+      if (base) return `${base}${p}`;
+    } catch {}
+  }
+
+  const fwdHost = (req.get("x-forwarded-host") || "").trim();
+  if (fwdHost) {
+    const proto = req.headers["x-forwarded-proto"] || "https";
+    const isApi = /^api\./i.test(fwdHost);
+    const base = isApi ? `${proto}://${fwdHost}` : apiBaseFromHost(fwdHost);
+    if (base) return `${base}${p}`;
+  }
+
+  const host = (req.get("host") || "").trim();
+  if (host) {
+    const proto = req.protocol || "https";
+    const isApi = /^api\./i.test(host);
+    const base = isApi ? `${proto}://${host}` : apiBaseFromHost(host);
+    if (base) return `${base}${p}`;
+  }
+
+  return `https://api.netspacezone.com${p}`;
+}
+
+/* --------------------------------- MULTER --------------------------------- */
 const upload = multer({
-  storage: multer.memoryStorage(), // buffer for our own write (disk or cloud)
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Only image files are allowed"));
-    }
+    if (!file.mimetype.startsWith("image/")) return cb(new Error("Only image files are allowed"));
     cb(null, true);
   },
 });
@@ -70,54 +108,43 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
   try {
     const { username, email, password, firstName, lastName, birthday, referral } = req.body;
 
-    // interests can be "a,b,c" or an array
     let interests = [];
-    if (Array.isArray(req.body.interests)) {
-      interests = req.body.interests;
-    } else if (typeof req.body.interests === "string") {
+    if (Array.isArray(req.body.interests)) interests = req.body.interests;
+    else if (typeof req.body.interests === "string")
       interests = req.body.interests.split(",").map((s) => s.trim()).filter(Boolean);
-    }
 
     if (!username || !email || !password || !firstName || !lastName || !birthday) {
       return res.status(400).json({ error: "Missing required fields" });
     }
-    if (!req.file) {
-      return res.status(400).json({ error: "Profile image is required" });
-    }
+    if (!req.file) return res.status(400).json({ error: "Profile image is required" });
 
     const usernameLower = String(username).trim().toLowerCase();
     const emailLower = String(email).trim().toLowerCase();
 
-    const existing = await User.findOne({
-      $or: [{ email: emailLower }, { username: usernameLower }],
-    });
+    const existing = await User.findOne({ $or: [{ email: emailLower }, { username: usernameLower }] });
     if (existing) return res.status(409).json({ error: "User already exists" });
 
     const imagePath = saveBufferToUploads(req.file.buffer, req.file.originalname);
-
     const birthDate = new Date(birthday);
-    if (isNaN(birthDate.getTime())) {
-      return res.status(400).json({ error: "Invalid birthday format" });
-    }
+    if (isNaN(birthDate.getTime())) return res.status(400).json({ error: "Invalid birthday format" });
 
-    // Let the model pre('save') hook hash the password
     const user = await User.create({
-      username: usernameLower, // store lower-case for consistency in this app
+      username: usernameLower,
       email: emailLower,
-      password,
+      password, // model hook should hash
       firstName,
       lastName,
       birthday: birthDate,
       referral: referral || "",
       interests,
-      profilePic: imagePath, // => "/uploads/xxxx.png"
+      profilePic: imagePath,
     });
 
     const token = signJwt({ id: user._id });
+
     res
       .cookie("token", token, {
-        httpOnly: true,
-        sameSite: "lax",
+        httpOnly: true, sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       })
@@ -131,6 +158,7 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
           lastName: user.lastName,
           birthday: user.birthday,
           profilePic: user.profilePic,
+          profileImageUrl: toPublicUrl(req, user.profilePic), // NEW
           referral: user.referral || "",
           interests: user.interests || [],
         },
@@ -148,8 +176,6 @@ router.post("/login", async (req, res) => {
     if (!identifier || !password) return res.status(400).json({ error: "Missing credentials" });
 
     const identLower = String(identifier).trim().toLowerCase();
-
-    // ⬇ ensure password hash is loaded for comparePassword()
     const user = await User.findOne({
       $or: [{ email: identLower }, { username: identLower }],
     }).select("+password");
@@ -159,10 +185,10 @@ router.post("/login", async (req, res) => {
     if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
     const token = signJwt({ id: user._id });
+
     res
       .cookie("token", token, {
-        httpOnly: true,
-        sameSite: "lax",
+        httpOnly: true, sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       })
@@ -175,6 +201,7 @@ router.post("/login", async (req, res) => {
           lastName: user.lastName,
           birthday: user.birthday,
           profilePic: user.profilePic,
+          profileImageUrl: toPublicUrl(req, user.profilePic), // NEW
           referral: user.referral || "",
           interests: user.interests || [],
         },
@@ -188,21 +215,24 @@ router.post("/login", async (req, res) => {
 // GET /api/auth/me
 router.get("/me", verifyToken, async (req, res) => {
   try {
-    // Fallback if middleware didn't set userId (avoid CastError -> 500)
-    let uid = req.userId;
-    if (!uid) {
-      const token = getTokenFromReq(req);
-      if (!token) return res.status(401).json({ error: "Not authenticated" });
-      const decoded = jwt.verify(token, JWT_SECRET);
-      uid = decoded.id || decoded._id;
-      if (!uid) return res.status(401).json({ error: "Not authenticated" });
-    }
-
+    const uid = req.userId;
     const me = await User.findById(uid).select("-password");
     if (!me) return res.status(401).json({ error: "Not authenticated" });
-    res.json({ user: me });
+    res.json({
+      user: {
+        id: me._id,
+        username: me.username,
+        email: me.email,
+        firstName: me.firstName,
+        lastName: me.lastName,
+        birthday: me.birthday,
+        profilePic: me.profilePic,
+        profileImageUrl: toPublicUrl(req, me.profilePic), // NEW
+        referral: me.referral || "",
+        interests: me.interests || [],
+      },
+    });
   } catch (err) {
-    // Normalize JWT errors to 401 instead of 500
     if (err?.name === "JsonWebTokenError" || err?.name === "TokenExpiredError") {
       return res.status(401).json({ error: "Invalid or expired token" });
     }
@@ -221,22 +251,14 @@ router.post("/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-/* ------------------------------------------------------------------ */
-/*   CHECK USERNAME AVAILABILITY (case-insensitive exact match)       */
-/*   GET /api/auth/check-username?username=<string> -> {available}    */
-/* ------------------------------------------------------------------ */
+/* check-username (kept) */
 router.get("/check-username", async (req, res) => {
   try {
     const raw = String(req.query.username || "").trim();
     if (!raw || !isValidUsername(raw)) {
       return res.status(200).json({ available: false, reason: "invalid" });
     }
-
-    // Case-insensitive exact match on "username"
-    const exists = await User.exists({
-      username: new RegExp("^" + escapeRegExp(raw) + "$", "i"),
-    });
-
+    const exists = await User.exists({ username: new RegExp("^" + escapeRegExp(raw) + "$", "i") });
     return res.json({ available: !exists });
   } catch (e) {
     console.error("check-username error:", e);
@@ -244,11 +266,7 @@ router.get("/check-username", async (req, res) => {
   }
 });
 
-/* ------------------------------------------------------------------ */
-/* Update profile (names, birthday, referral, interests, avatar,      */
-/*                and also username & email with validation)          */
-/* ------------------------------------------------------------------ */
-// PATCH /api/auth/profile
+/* PATCH /api/auth/profile (returns absolute profileImageUrl too) */
 router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -256,29 +274,21 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
 
     const payload = req.body || {};
 
-    // ---- Optional: username change
     if (payload.username !== undefined) {
       const desired = String(payload.username).trim();
-      if (!isValidUsername(desired)) {
-        return res.status(400).json({ error: "Invalid username format" });
-      }
+      if (!isValidUsername(desired)) return res.status(400).json({ error: "Invalid username format" });
       const desiredLower = desired.toLowerCase();
       const same = desiredLower === String(user.username || "").toLowerCase();
       if (!same) {
-        const taken = await User.exists({
-          username: new RegExp("^" + escapeRegExp(desired) + "$", "i"),
-        });
+        const taken = await User.exists({ username: new RegExp("^" + escapeRegExp(desired) + "$", "i") });
         if (taken) return res.status(409).json({ error: "Username already taken" });
-        user.username = desiredLower; // store lowercase for consistency
+        user.username = desiredLower;
       }
     }
 
-    // ---- Optional: email change
     if (payload.email !== undefined) {
       const newEmail = String(payload.email).trim();
-      if (!isValidEmail(newEmail)) {
-        return res.status(400).json({ error: "Invalid email address" });
-      }
+      if (!isValidEmail(newEmail)) return res.status(400).json({ error: "Invalid email address" });
       const newLower = newEmail.toLowerCase();
       const same = newLower === String(user.email || "").toLowerCase();
       if (!same) {
@@ -288,19 +298,16 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
       }
     }
 
-    // ---- Names / referral
     if (payload.firstName !== undefined) user.firstName = String(payload.firstName).trim();
     if (payload.lastName !== undefined) user.lastName = String(payload.lastName).trim();
     if (payload.referral !== undefined) user.referral = String(payload.referral).trim();
 
-    // ---- Birthday (UI keeps read-only; still validate if present)
     if (payload.birthday !== undefined) {
       const d = new Date(payload.birthday);
       if (isNaN(d.getTime())) return res.status(400).json({ error: "Invalid birthday format" });
       user.birthday = d;
     }
 
-    // ---- Interests
     if (payload.interests !== undefined) {
       let interests = [];
       if (Array.isArray(payload.interests)) interests = payload.interests;
@@ -309,10 +316,9 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
       user.interests = interests;
     }
 
-    // ---- Profile image
     if (req.file) {
       const imagePath = saveBufferToUploads(req.file.buffer, req.file.originalname);
-      user.profilePic = imagePath; // => "/uploads/xxxx.png"
+      user.profilePic = imagePath;
     }
 
     await user.save();
@@ -327,6 +333,7 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
         lastName: user.lastName,
         birthday: user.birthday,
         profilePic: user.profilePic,
+        profileImageUrl: toPublicUrl(req, user.profilePic), // NEW
         referral: user.referral || "",
         interests: user.interests || [],
       },
@@ -334,34 +341,6 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
   } catch (err) {
     console.error("Update profile error:", err);
     res.status(500).json({ error: "Failed to update profile" });
-  }
-});
-
-/* -------------------------------------- */
-/* Change password (secure, verified)     */
-/* -------------------------------------- */
-// PATCH /api/auth/password
-router.patch("/password", verifyToken, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body || {};
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ error: "Missing currentPassword or newPassword" });
-    }
-
-    // ⬇ include password hash for comparePassword()
-    const user = await User.findById(req.userId).select("+password");
-    if (!user) return res.status(404).json({ error: "User not found" });
-
-    const ok = await user.comparePassword(currentPassword);
-    if (!ok) return res.status(401).json({ error: "Current password is incorrect" });
-
-    user.password = newPassword; // pre('save') hook should hash this
-    await user.save();
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("Change password error:", err);
-    res.status(500).json({ error: "Failed to change password" });
   }
 });
 
