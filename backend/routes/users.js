@@ -22,44 +22,55 @@ const escapeRx = (s='') => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function normalizeUploadsPath(raw) {
   if (!raw) return null;
   let s = String(raw).trim().replace(/\\/g, '/');
-
-  // Already absolute or data URI
   if (/^https?:\/\//i.test(s) || /^data:/i.test(s)) return s;
-
-  // Normalize to "/uploads/..."
   const low = s.toLowerCase();
   const idx = low.indexOf('/uploads/');
   if (idx >= 0) s = s.slice(idx);
   if (s.startsWith('uploads/')) s = '/' + s;
   if (!s.startsWith('/')) s = '/' + s;
-
   return s; // "/uploads/xyz.png"
 }
+
+function apexFromHost(h) { return (h || '').replace(/^https?:\/\//i,'').replace(/\/.*$/,'').replace(/^www\./i,''); }
+function apiBaseFromHost(h) { const apex = apexFromHost(h); return apex ? `https://api.${apex}` : ''; }
 
 /** Build a public absolute URL for a stored pic path with robust base selection. */
 function toPublicUrl(req, raw) {
   const p = normalizeUploadsPath(raw);
   if (!p) return null;
 
-  const trim = (x) => (x || '').toString().trim().replace(/\/+$/,'');
-  const proto = req.headers['x-forwarded-proto'] || req.protocol;
-  const host = req.get('host') || '';
-  const origin = trim(req.get('origin'));
-  const fwdHost = trim(req.get('x-forwarded-host'));
+  const explicit = (process.env.UPLOADS_PUBLIC_BASE || '').trim().replace(/\/+$/,'');
+  if (explicit) return `${explicit}${p}`;
 
-  const candidates = [
-    trim(process.env.UPLOADS_PUBLIC_BASE),                            // 1) explicit env
-    origin,                                                           // 2) page origin (deployed site)
-    fwdHost ? `${proto}://${fwdHost}` : '',                           // 3) proxy forward host
-    `${proto}://${host}`,                                             // 4) current server host
-    'https://api.netspacezone.com',                                   // 5) safe fallbacks
-    'https://www.netspacezone.com',
-    'https://netspacezone.com',
-  ].filter(Boolean);
+  const origin = (req.get('origin') || '').trim();
+  if (origin) {
+    try {
+      const u = new URL(origin);
+      // If origin is already api.*, keep it; else switch to api.<apex>
+      const isApi = /^api\./i.test(u.hostname);
+      const base = isApi ? `${u.protocol}//${u.host}` : apiBaseFromHost(u.host);
+      if (base) return `${base}${p}`;
+    } catch {}
+  }
 
-  // Pick the first non-empty candidate
-  const base = candidates[0];
-  return `${base}${p}`;
+  const fwdHost = (req.get('x-forwarded-host') || '').trim();
+  if (fwdHost) {
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    const isApi = /^api\./i.test(fwdHost);
+    const base = isApi ? `${proto}://${fwdHost}` : apiBaseFromHost(fwdHost);
+    if (base) return `${base}${p}`;
+  }
+
+  const host = (req.get('host') || '').trim();
+  if (host) {
+    const proto = req.protocol || 'https';
+    const isApi = /^api\./i.test(host);
+    const base = isApi ? `${proto}://${host}` : apiBaseFromHost(host);
+    if (base) return `${base}${p}`;
+  }
+
+  // Final safe fallback
+  return `https://api.netspacezone.com${p}`;
 }
 
 /* ---------------- me ---------------- */
@@ -159,7 +170,7 @@ router.get('/search', requireAuth, async (req, res) => {
         _id: u._id,
         username: u.username,
         fullName: u.fullName || [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username,
-        profileImageUrl: toPublicUrl(req, rawPic), // always absolute (prod-safe)
+        profileImageUrl: toPublicUrl(req, rawPic), // always absolute, prefers api.<apex>
         isFriend: meId ? friendSet.has(String(u._id)) : false,
         requestPending: meId ? pendingTo.has(String(u._id)) : false,
       };
