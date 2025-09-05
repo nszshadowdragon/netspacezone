@@ -3,84 +3,84 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import ImageGallery from "../components/ImageGallery";
+import AvatarImg from "../components/AvatarImg";
 
-/* ------------------- API host helpers (local vs prod) ------------------- */
-function apiHost() {
-  const h = window.location.hostname;
-  const isLocal = h === "localhost" || h === "127.0.0.1";
-  return isLocal ? "http://localhost:5000" : "https://api.netspacezone.com";
+/* ------------------- API base (dev via proxy; prod via env) ------------------- */
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+
+/* ----------------------- in-memory profile cache ----------------------- */
+const PROFILE_CACHE = new Map(); // key: lowercased username -> profile object
+
+function getToken() {
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    sessionStorage.getItem("token") ||
+    ""
+  );
 }
-const API_HOST =
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
-  apiHost();
 
-/* ----------------------- avatar fallback data URI ----------------------- */
-const fallbackDataUri =
+/* Resolve a profile by username using /api/users/search (auth required). */
+async function fetchProfileByUsername(username) {
+  const res = await fetch(
+    `${API_BASE}/api/users/search?q=${encodeURIComponent(username)}`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
+      },
+    }
+  );
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => ({}));
+  const arr = Array.isArray(data?.users) ? data.users : Array.isArray(data) ? data : [];
+  const exact = arr.find(
+    (u) => String(u.username).toLowerCase() === String(username).toLowerCase()
+  );
+  return exact || arr[0] || null;
+}
+
+/* ---- tiny perf helpers to warm the connection & image ---- */
+function preconnectTo(origin) {
+  if (!origin) return;
+  try {
+    const link = document.createElement("link");
+    link.rel = "preconnect";
+    link.href = origin;
+    link.crossOrigin = "anonymous";
+    document.head.appendChild(link);
+  } catch {}
+}
+function prefetchImage(src) {
+  if (!src) return;
+  try {
+    const img = new Image();
+    img.decoding = "async";
+    // @ts-ignore
+    img.fetchPriority = "high";
+    img.loading = "eager";
+    img.src = src;
+  } catch {}
+}
+
+/* ----------------------------- tiny inline avatar for friend placeholders ----------------------------- */
+const friendDot =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">
-      <rect width="100%" height="100%" fill="#111"/>
-      <circle cx="60" cy="60" r="56" fill="#222" stroke="#333" stroke-width="4"/>
-      <text x="50%" y="55%" text-anchor="middle" fill="#ffe259" font-size="16" font-family="Arial">avatar</text>
+    `<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'>
+      <rect width='100%' height='100%' fill='#0f0f0f'/>
+      <circle cx='40' cy='40' r='36' fill='#1c1c1c' stroke='#333' stroke-width='2'/>
     </svg>`
   );
-
-/** Normalize avatar paths for local/prod */
-function resolveAvatar(raw) {
-  let src = (raw || "").trim();
-  if (!src) return fallbackDataUri;
-  if (/^(data:|blob:)/i.test(src)) return src;
-
-  const local =
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1";
-  const host = apiHost();
-
-  if (/^https?:\/\//i.test(src)) {
-    try {
-      const u = new URL(src);
-      if (/api\.netspacezone\.com$/i.test(u.hostname) && u.pathname.startsWith("/uploads/")) {
-        return (local ? "http://localhost:5000" : "https://api.netspacezone.com") + u.pathname;
-      }
-      return src;
-    } catch {
-      // fall through
-    }
-  }
-
-  src = src.replace(/^\.?\/*/, "");
-  if (!src.startsWith("uploads/")) src = `uploads/${src}`;
-  return `${host}/${src}`;
-}
-
-/* ----------------------- profile lookup by username ---------------------- */
-async function fetchProfileByUsername(username) {
-  // Try a few likely endpoints; first one that returns OK wins.
-  const candidates = [
-    `${API_HOST}/api/users/by-username/${encodeURIComponent(username)}`,
-    `${API_HOST}/api/auth/user/by-username/${encodeURIComponent(username)}`,
-    `${API_HOST}/api/auth/profile?username=${encodeURIComponent(username)}`,
-    `${API_HOST}/api/users?username=${encodeURIComponent(username)}`,
-  ];
-  for (const url of candidates) {
-    try {
-      const res = await fetch(url, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        return data.user || data.profile || data; // support various shapes
-      }
-    } catch {
-      /* ignore and try next */
-    }
-  }
-  return null;
-}
 
 export default function ProfilePage() {
   const navigate = useNavigate();
   const { username: routeUsername } = useParams();
   const { user } = useAuth();
 
+  const [profileUser, setProfileUser] = useState(null);
   const [isFriend, setIsFriend] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [sections, setSections] = useState({
@@ -91,59 +91,75 @@ export default function ProfilePage() {
     interests: true,
   });
 
-  // Who is the profile owner on this page?
-  const [profileUser, setProfileUser] = useState(null);
-  const viewerIsOwner = !!(user && profileUser && user._id === profileUser._id);
+  const viewerIsOwner =
+    !!(user && profileUser && String(user._id) === String(profileUser._id));
 
-  // Normalize /profile -> /profile/:me once we know who "me" is.
-  // IMPORTANT: Do NOT redirect to home/spacehub from here.
+  // If route is /profile and we know me, normalize to /profile/:me
   useEffect(() => {
     if (!routeUsername && user?.username) {
       navigate(`/profile/${user.username}`, { replace: true });
     }
-  }, [routeUsername, user?.username, navigate]); // :contentReference[oaicite:2]{index=2}
+  }, [routeUsername, user?.username, navigate]);
 
-  // Load the profile owner (self or by username)
+  // Load profile (instant from cache, then background revalidate)
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
-      if (!routeUsername) {
-        // Own profile
-        setProfileUser(user || null);
-        return;
-      }
-      if (user?.username && routeUsername === user.username) {
+      const targetUsername = routeUsername || user?.username;
+      if (!targetUsername) return;
+
+      const key = String(targetUsername).toLowerCase();
+
+      // 1) Instant render from cache (if present)
+      if (PROFILE_CACHE.has(key)) {
+        const cached = PROFILE_CACHE.get(key);
+        setProfileUser(cached);
+        // Warm connection & image so swap is instant even if we revalidate
+        if (cached?.profileImageUrl && /^https?:\/\//i.test(cached.profileImageUrl)) {
+          try { preconnectTo(new URL(cached.profileImageUrl).origin); } catch {}
+          prefetchImage(cached.profileImageUrl);
+        }
+      } else if (routeUsername && user?.username && routeUsername === user.username) {
+        // If viewing myself and not cached yet, seed cache with current user
+        PROFILE_CACHE.set(key, user);
         setProfileUser(user);
-        return;
       }
-      const other = await fetchProfileByUsername(routeUsername);
-      if (!cancelled) setProfileUser(other);
+
+      // 2) Revalidate in background
+      const fresh = await fetchProfileByUsername(targetUsername);
+      if (cancelled) return;
+
+      if (fresh) {
+        PROFILE_CACHE.set(key, fresh);
+        setProfileUser((prev) => {
+          // If we already showed cached data, avoid state churn unless changed
+          if (prev && prev._id === fresh._id && prev.profileImageUrl === fresh.profileImageUrl) {
+            return prev;
+          }
+          return fresh;
+        });
+
+        // Warm connection + preload new avatar (prevents visible swap delay)
+        if (fresh.profileImageUrl && /^https?:\/\//i.test(fresh.profileImageUrl)) {
+          try { preconnectTo(new URL(fresh.profileImageUrl).origin); } catch {}
+          prefetchImage(fresh.profileImageUrl);
+        }
+      }
     })();
-    return () => {
-      cancelled = true;
-    };
+
+    return () => { cancelled = true; };
   }, [routeUsername, user]);
 
-  // Which username to show in UI
   const displayUsername = useMemo(
-    () => routeUsername || user?.username || "User",
+    () => routeUsername || user?.username || "user",
     [routeUsername, user?.username]
-  ); // :contentReference[oaicite:3]{index=3}
+  );
 
-  // Avatar: show the profile owner's avatar (self or other)
-  const avatar = useMemo(() => {
-    const src =
-      profileUser?.profilePic ||
-      profileUser?.profileImage ||
-      (viewerIsOwner ? user?.profilePic || user?.profileImage : "");
-    return resolveAvatar(src);
-  }, [profileUser, viewerIsOwner, user?.profilePic, user?.profileImage]);
-
-  const toggleSection = (key) => {
+  const toggleSection = (key) =>
     setSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
 
-  // If not logged in and no :username param, show a friendly gate (no redirect).
+  // Gate for unauthenticated /profile (without :username)
   if (!user && !routeUsername) {
     return (
       <div
@@ -157,7 +173,7 @@ export default function ProfilePage() {
       >
         <h2 style={{ margin: 0, marginBottom: "0.5rem" }}>Profile</h2>
         <p style={{ color: "#ddd" }}>
-          Sign in to view your profile, or open someone’s profile via a URL like{" "}
+          Sign in to view your profile, or open a profile via a URL like{" "}
           <code style={{ color: "#ffe259" }}>/profile/nszshadowdragon</code>.
         </p>
       </div>
@@ -178,7 +194,6 @@ export default function ProfilePage() {
         }}
       />
 
-      {/* Responsive styles */}
       <style>{`
         .profile-page{
           min-height:100vh; width:100vw; background:#000; color:#ffe259;
@@ -196,26 +211,19 @@ export default function ProfilePage() {
         .pp-right{ flex:1; text-align:right; }
         .pp-actions{ margin-top:.8rem; display:flex; gap:.5rem; flex-wrap:wrap; }
         .pp-username{ margin:0; font-size:clamp(20px,3.2vw,28px); }
-        .pp-avatar{
-          height:clamp(96px,14vw,120px); width:clamp(96px,14vw,120px);
-          border-radius:50%; border:3px solid #000; object-fit:cover; display:block; margin:0 auto .5rem;
-        }
-
+        .pp-main{ display:flex; gap:2rem; }
+        .pp-col-left{ flex:2; }
+        .pp-col-right{ flex:1; }
         @media (max-width: 900px){
           .pp-header{ flex-direction:column; align-items:center; text-align:center; }
           .pp-right{ text-align:center; }
           .pp-actions{ justify-content:center; }
+          .pp-main{ flex-direction:column; }
         }
-
-        .pp-main{ display:flex; gap:2rem; }
-        .pp-col-left{ flex:2; }
-        .pp-col-right{ flex:1; }
-        @media (max-width: 900px){ .pp-main{ flex-direction:column; } }
 
         .section{
           margin-bottom:2rem; padding:1rem; border-radius:8px; border:1px solid #333; background:rgba(17,17,17,.5);
         }
-
         .pp-friends{ display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; }
         @media (max-width: 480px){ .pp-friends{ grid-template-columns:repeat(2,1fr); } }
 
@@ -230,7 +238,7 @@ export default function ProfilePage() {
       <div className="pp-container">
         {/* HEADER */}
         <div className="pp-header">
-          {/* LEFT: Favorite Quote */}
+          {/* LEFT */}
           <div className="pp-left">
             <h3 style={{ marginBottom: ".5rem" }}>Favorite Quote</h3>
             <p>“Where connection meets cosmos.”</p>
@@ -238,7 +246,10 @@ export default function ProfilePage() {
               123 Friends • 56 Posts • 900 Likes
             </small>
             <div className="pp-actions">
-              <button className="pp-btn action" onClick={() => setIsFriend(!isFriend)}>
+              <button
+                className="pp-btn action"
+                onClick={() => setIsFriend((v) => !v)}
+              >
                 {isFriend ? "Unfriend" : "Add"}
               </button>
               <button className="pp-btn action">Message</button>
@@ -246,23 +257,24 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          {/* CENTER: Avatar + Username */}
+          {/* CENTER: avatar + username */}
           <div className="pp-center">
-            <img
-              src={avatar}
-              alt="avatar"
-              className="pp-avatar"
-              onError={(e) => {
-                if (!e.currentTarget.dataset.fallback) {
-                  e.currentTarget.dataset.fallback = "1";
-                  e.currentTarget.src = fallbackDataUri;
-                }
+            <AvatarImg
+              user={profileUser || (viewerIsOwner ? user : null)}
+              style={{
+                width: "clamp(96px,14vw,120px)",
+                height: "clamp(96px,14vw,120px)",
+                border: "3px solid #000",
+                display: "block",
+                margin: "0 auto .5rem",
               }}
+              rounded
+              title={profileUser ? `@${profileUser.username}` : undefined}
             />
             <h1 className="pp-username">@{displayUsername}</h1>
           </div>
 
-          {/* RIGHT: Highlights + Edit */}
+          {/* RIGHT */}
           <div className="pp-right">
             <div style={{ marginBottom: "1rem" }}>
               <button
@@ -282,7 +294,7 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* EDIT MODE PANEL */}
+        {/* EDIT PANEL */}
         {editMode && (
           <div
             className="section"
@@ -292,7 +304,9 @@ export default function ProfilePage() {
               boxShadow: "0 0 10px rgba(255,226,89,0.5)",
             }}
           >
-            <h2 style={{ marginTop: 0, color: "#ffe259" }}>⚡ Profile Customization</h2>
+            <h2 style={{ marginTop: 0, color: "#ffe259" }}>
+              ⚡ Profile Customization
+            </h2>
             <p style={{ marginBottom: "1rem", color: "#aaa" }}>
               Toggle sections and adjust your layout:
             </p>
@@ -315,13 +329,16 @@ export default function ProfilePage() {
           </div>
         )}
 
-        {/* MAIN LAYOUT */}
+        {/* MAIN */}
         <div className="pp-main">
-          {/* LEFT COLUMN */}
+          {/* LEFT COL */}
           <div className="pp-col-left">
             {sections.feed && (
               <div className="section">
-                <textarea className="pp-input" placeholder="What's on your mind?" />
+                <textarea
+                  className="pp-input"
+                  placeholder="What's on your mind?"
+                />
                 <button className="pp-btn gold" style={{ marginTop: ".5rem" }}>
                   Post
                 </button>
@@ -346,13 +363,8 @@ export default function ProfilePage() {
             {sections.gallery && (
               <div className="section">
                 <h2 style={{ marginTop: 0 }}>Photos</h2>
-
-                {/* === Real Gallery (owner-aware) === */}
                 {profileUser ? (
-                  <ImageGallery
-                    ownerId={profileUser._id}
-                    canEdit={viewerIsOwner}
-                  />
+                  <ImageGallery ownerId={profileUser._id} canEdit={viewerIsOwner} />
                 ) : (
                   <div style={{ color: "#bbb" }}>Loading profile…</div>
                 )}
@@ -382,7 +394,7 @@ export default function ProfilePage() {
             )}
           </div>
 
-          {/* RIGHT COLUMN */}
+          {/* RIGHT COL */}
           <div className="pp-col-right">
             {sections.friends && (
               <div className="section">
@@ -391,17 +403,13 @@ export default function ProfilePage() {
                   {Array.from({ length: 6 }).map((_, i) => (
                     <div key={i} style={{ textAlign: "center" }}>
                       <img
-                        src="https://via.placeholder.com/80"
-                        style={{ borderRadius: "50%", border: "1px solid #333" }}
+                        src={friendDot}
                         alt="friend"
-                        onError={(e) => {
-                          e.currentTarget.src =
-                            "data:image/svg+xml;utf8," +
-                            encodeURIComponent(
-                              `<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'>
-                                 <rect width='100%' height='100%' fill='#111'/>
-                               </svg>`
-                            );
+                        style={{
+                          borderRadius: "50%",
+                          border: "1px solid #333",
+                          width: 80,
+                          height: 80,
                         }}
                       />
                       <p style={{ fontSize: ".8rem" }}>Friend{i + 1}</p>
