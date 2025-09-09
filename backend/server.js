@@ -3,6 +3,7 @@ require("dotenv").config();
 
 const express = require("express");
 const http = require("http");
+const https = require("https");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const path = require("path");
@@ -13,12 +14,9 @@ const { Server } = require("socket.io");
 const app = express();
 
 /* ------------ ENV ------------ */
-const PORT =
-  process.env.PORT ||
-  process.env.API_PORT ||
-  5000;
+const PORT = process.env.PORT || process.env.API_PORT || 5000;
+const REMOTE_BASE = (process.env.UPLOADS_REMOTE_BASE || "").replace(/\/+$/, "");
 
-// Accept multiple common Mongo env names so DB connect never silently breaks
 const MONGO_URI =
   process.env.MONGO_URI ||
   process.env.MONGODB_URI ||
@@ -27,40 +25,31 @@ const MONGO_URI =
   process.env.DATABASE_URL ||
   "";
 
-/* ------------ CORS allowlist ------------ */
+/* ------------ CORS ------------ */
 const DEFAULT_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
   "https://netspacezone.com",
   "https://www.netspacezone.com",
 ];
-
-// Accept either CORS_ORIGINS or CORS_ORIGIN from env (comma separated)
 const EXTRA = (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-
 const ALLOWLIST = Array.from(new Set([...DEFAULT_ORIGINS, ...EXTRA]));
-
-/** Is this origin allowed? */
 function isAllowedOrigin(origin) {
-  // No Origin header (server-to-server, curl) -> allow
   if (!origin) return true;
   if (ALLOWLIST.includes(origin)) return true;
-
   try {
     const { hostname } = new URL(origin);
-    // Allow any Render subdomain (static hosting) and your prod host
     if (hostname.endsWith(".onrender.com")) return true;
     if (hostname === "netspacezone.com" || hostname === "www.netspacezone.com")
       return true;
-  } catch {
-    // ignore parse error -> disallow
-  }
+  } catch {}
   return false;
 }
-
 const corsOptions = {
   origin: (origin, cb) =>
     isAllowedOrigin(origin) ? cb(null, true) : cb(new Error("Not allowed by CORS")),
@@ -77,26 +66,43 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-/* ------------ Upload dirs (serve from BOTH in dev) ------------ */
-// Primary uploads directory (backend)
-const DEFAULT_UPLOAD_DIR =
-  process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
+/* ------------ Uploads: static mounts + smart lookup + REMOTE proxy ------------ */
+function resolveUploadDirs() {
+  const guesses = [
+    process.env.UPLOAD_DIR && path.resolve(process.env.UPLOAD_DIR),
 
-// Optional: older/local assets under the frontend public folder (dev convenience)
-const FRONT_PUBLIC_UPLOADS =
-  process.env.FRONT_PUBLIC_UPLOADS ||
-  path.join(__dirname, "..", "frontend", "public", "uploads");
+    path.resolve(__dirname, "uploads"),
+    path.resolve(__dirname, "public", "uploads"),
 
-// Build a list of directories to serve under the same /uploads route
-const UPLOAD_DIRS = [DEFAULT_UPLOAD_DIR];
-if (fs.existsSync(FRONT_PUBLIC_UPLOADS)) {
-  UPLOAD_DIRS.push(FRONT_PUBLIC_UPLOADS);
+    path.resolve(__dirname, "..", "uploads"),
+    path.resolve(__dirname, "..", "public", "uploads"),
+
+    path.resolve(process.cwd(), "uploads"),
+    path.resolve(process.cwd(), "public", "uploads"),
+    path.resolve(process.cwd(), "backend", "uploads"),
+    path.resolve(process.cwd(), "backend", "public", "uploads"),
+
+    path.resolve(__dirname, "..", "frontend", "public", "uploads"),
+  ]
+    .filter(Boolean)
+    .map((p) => path.normalize(p));
+
+  const primary = path.resolve(__dirname, "uploads");
+  try { fs.mkdirSync(primary, { recursive: true }); } catch {}
+
+  const seen = new Set();
+  const out = [];
+  for (const g of [primary, ...guesses]) {
+    if (seen.has(g)) continue;
+    seen.add(g);
+    try { if (fs.existsSync(g)) out.push(g); } catch {}
+  }
+  return out;
 }
+const UPLOAD_DIRS = resolveUploadDirs();
+console.log("[uploads] serving from:", UPLOAD_DIRS.join(" | "));
 
-// Ensure they exist
-UPLOAD_DIRS.forEach((dir) => fs.mkdirSync(dir, { recursive: true }));
-
-// Mount ALL upload dirs at /uploads (order matters; first wins)
+// static mounts first (fast path)
 UPLOAD_DIRS.forEach((dir) => {
   app.use(
     "/uploads",
@@ -110,22 +116,132 @@ UPLOAD_DIRS.forEach((dir) => {
     })
   );
 });
-console.log("[uploads] serving from:", UPLOAD_DIRS.join(" | "));
+
+const ALT_SUBS = ["", "users", "user", "profile", "profiles", "avatars", "images", "gallery", "pics", "photos"];
+const ALT_EXTS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+
+function fileExists(p) { try { return fs.existsSync(p) && fs.statSync(p).isFile(); } catch { return false; } }
+function dirExists(p)  { try { return fs.existsSync(p) && fs.statSync(p).isDirectory(); } catch { return false; } }
+function listDir(p)    { try { return fs.readdirSync(p); } catch { return []; } }
+
+function tryLocalSend(res, p) {
+  if (fileExists(p)) {
+    console.log(`[uploads] found -> ${p}`);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    return res.sendFile(p);
+  }
+  return false;
+}
+
+// Proxy to remote /uploads if configured
+function proxyRemoteUpload(rel, res) {
+  if (!REMOTE_BASE) return false;
+  const cleaned = String(rel || "").replace(/^\/+/, ""); // e.g. "1756...png" or "users/a/b.png"
+  const target = new URL(`${REMOTE_BASE}/uploads/${cleaned}`);
+  console.log(`[uploads] proxy -> ${target.href}`);
+
+  const lib = target.protocol === "https:" ? https : http;
+  const req = lib.get(target, (up) => {
+    if ((up.statusCode || 500) >= 200 && (up.statusCode || 500) < 300) {
+      // pass through content-type/length if present
+      if (up.headers["content-type"]) res.setHeader("Content-Type", up.headers["content-type"]);
+      if (up.headers["content-length"]) res.setHeader("Content-Length", up.headers["content-length"]);
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      up.pipe(res);
+    } else {
+      res.status(up.statusCode || 502);
+      up.pipe(res);
+    }
+  });
+  req.on("error", (err) => {
+    console.warn("[uploads] proxy error:", err?.message || err);
+    if (!res.headersSent) res.status(404).send("Not Found");
+  });
+  return true;
+}
+
+// Fallback resolver: alt subfolders/exts + nested + remote proxy
+app.get("/uploads/*", (req, res) => {
+  const relRaw = (req.params[0] || "").replace(/^\/+/, "");
+  if (!relRaw) return res.status(404).send("Not Found");
+
+  const relNorm = relRaw.split(/[\\/]+/).join("/");
+  const base = path.basename(relNorm);
+  const parsed = path.parse(base);
+  const stem = parsed.name;
+  const wantExt = (parsed.ext || "").toLowerCase();
+
+  // A. exact rel under each root
+  for (const root of UPLOAD_DIRS) {
+    if (tryLocalSend(res, path.join(root, relNorm))) return;
+  }
+
+  const tried = [];
+
+  // B. alt subfolders + ext combos + nested scan
+  for (const root of UPLOAD_DIRS) {
+    for (const sub of ALT_SUBS) {
+      const dir = sub ? path.join(root, sub) : root;
+
+      if (wantExt) {
+        const p1 = path.join(dir, stem + wantExt);
+        if (tryLocalSend(res, p1)) return;
+        tried.push(p1);
+      }
+      for (const ext of ALT_EXTS) {
+        if (ext === wantExt) continue;
+        const p2 = path.join(dir, stem + ext);
+        if (tryLocalSend(res, p2)) return;
+        tried.push(p2);
+      }
+
+      // nested one level
+      if (dirExists(dir)) {
+        for (const child of listDir(dir)) {
+          const childDir = path.join(dir, child);
+          if (!dirExists(childDir)) continue;
+
+          if (wantExt) {
+            const pSame2 = path.join(childDir, stem + wantExt);
+            if (tryLocalSend(res, pSame2)) return;
+            tried.push(pSame2);
+          }
+          for (const ext of ALT_EXTS) {
+            if (ext === wantExt) continue;
+            const p3 = path.join(childDir, stem + ext);
+            if (tryLocalSend(res, p3)) return;
+            tried.push(p3);
+          }
+
+          const names = listDir(childDir);
+          const lowerStem = stem.toLowerCase();
+          const hit = names.find((n) => n.toLowerCase().startsWith(lowerStem));
+          if (hit && tryLocalSend(res, path.join(childDir, hit))) return;
+        }
+
+        // same dir prefix scan
+        const names2 = listDir(dir);
+        const lowerStem = stem.toLowerCase();
+        const hit2 = names2.find((n) => n.toLowerCase().startsWith(lowerStem));
+        if (hit2 && tryLocalSend(res, path.join(dir, hit2))) return;
+      }
+    }
+  }
+
+  // C. proxy to remote origin if configured
+  if (proxyRemoteUpload(relNorm, res)) return;
+
+  console.warn(`[uploads] 404 for "${relRaw}". Tried:\n - ${tried.join("\n - ")}`);
+  return res.status(404).send("Not Found");
+});
 
 /* ------------ Routes ------------ */
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/gallery", require("./routes/galleryRoutes"));
+app.use("/api/users", require("./routes/users"));
 
-// Users router (search + friend request folded in)
-const usersRouter = require("./routes/users");
-app.use("/api/users", usersRouter);
-
-/* Health check + basic diagnostics */
 app.get("/healthz", (_req, res) =>
-  res.json({
-    ok: true,
-    mongoConfigured: Boolean(MONGO_URI),
-  })
+  res.json({ ok: true, mongoConfigured: Boolean(MONGO_URI), uploadsMounted: UPLOAD_DIRS, remoteFallback: REMOTE_BASE || null })
 );
 
 /* ------------ DB ------------ */
@@ -133,119 +249,31 @@ if (MONGO_URI) {
   mongoose
     .connect(MONGO_URI)
     .then(() => console.log("[DB] MongoDB connected"))
-    .catch((err) => {
-      console.error("[DB] Mongo connection error:", err?.message || err);
-    });
+    .catch((err) => console.error("[DB] Mongo connection error:", err?.message || err));
 } else {
-  console.warn(
-    "[DB] No Mongo URI detected (set one of: MONGO_URI, MONGODB_URI, DATABASE_URL, DB_URI)."
-  );
+  console.warn("[DB] No Mongo URI set (MONGO_URI / MONGODB_URI / DATABASE_URL / DB_URI).");
 }
 
-/* ------------ HTTP server + Socket.IO ------------ */
+/* ------------ HTTP + Socket.IO ------------ */
 const server = http.createServer(app);
-
 const io = new Server(server, {
   cors: {
-    origin: (origin, cb) =>
-      isAllowedOrigin(origin) ? cb(null, true) : cb(new Error("Not allowed by CORS")),
+    origin: (origin, cb) => (isAllowedOrigin(origin) ? cb(null, true) : cb(new Error("Not allowed by CORS"))),
     credentials: true,
     methods: ["GET", "POST"],
   },
   path: "/socket.io",
 });
-
-/* ===== Real-time wiring =====
-   - presence:*  -> user-specific room: user:<userId>
-   - gallery:*   -> gallery owner room: gallery:<ownerId>
-==================================================== */
-const socketsByUser = new Map(); // userId -> Set<socketId>
-
-function emitPresence(userId) {
-  const uid = String(userId);
-  const count = socketsByUser.get(uid)?.size || 0;
-  const payload = {
-    userId: uid,
-    online: count > 0,
-    connections: count,
-    ts: Date.now(),
-  };
-  io.to(`user:${uid}`).emit("presence:update", payload);
-  io.to(`gallery:${uid}`).emit("presence:update", payload);
-}
-
-function addPresence(userId, socket, info = {}) {
-  const uid = String(userId);
-  let set = socketsByUser.get(uid);
-  if (!set) {
-    set = new Set();
-    socketsByUser.set(uid, set);
-  }
-  set.add(socket.id);
-  socket.data.userId = uid;
-  socket.data.userInfo = info || {};
-  emitPresence(uid);
-}
-
-function removePresence(socket) {
-  const uid = socket.data?.userId;
-  if (!uid) return;
-  const set = socketsByUser.get(uid);
-  if (set) {
-    set.delete(socket.id);
-    if (set.size === 0) socketsByUser.delete(uid);
-  }
-  emitPresence(uid);
-}
-
-io.use((socket, next) => {
-  const token =
-    socket.handshake.auth?.token ||
-    (socket.handshake.headers?.authorization || "").replace(/^Bearer\s+/i, "");
-  socket.data = socket.data || {};
-  socket.data.token = token || "";
-  next();
-});
+app.set("io", io);
 
 io.on("connection", (socket) => {
-  socket.on("presence:join", ({ userId, username, ...rest } = {}) => {
-    if (!userId) return;
-    socket.join(`user:${userId}`);
-    addPresence(userId, socket, { username, ...rest });
-  });
-
-  socket.on("presence:leave", () => removePresence(socket));
-
-  socket.on("gallery:join", ({ ownerId } = {}) => {
-    if (!ownerId) return;
-    socket.join(`gallery:${String(ownerId)}`);
-  });
-
-  socket.on("gallery:leave", ({ ownerId } = {}) => {
-    if (!ownerId) return;
-    socket.leave(`gallery:${String(ownerId)}`);
-  });
-
-  socket.on("image:join", ({ imageId } = {}) => {
-    if (imageId) socket.join(`image:${String(imageId)}`);
-  });
-  socket.on("image:leave", ({ imageId } = {}) => {
-    if (imageId) socket.leave(`image:${String(imageId)}`);
-  });
-
-  socket.on("disconnect", () => removePresence(socket));
+  socket.on("presence:join", ({ userId } = {}) => { if (userId) socket.join(`user:${userId}`); });
+  socket.on("presence:leave", () => {});
+  socket.on("disconnect", () => {});
 });
-
-/* Make helpers available to routes/controllers */
-app.set("io", io);
 
 /* ------------ Start ------------ */
 server.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`);
   console.log(`CORS allowlist: ${ALLOWLIST.join(", ")}`);
-  console.log(
-    `[DB] Using ${
-      MONGO_URI ? "configured" : "NO"
-    } Mongo URI (accepted keys: MONGO_URI/MONGODB_URI/DATABASE_URL/DB_URI)`
-  );
 });
