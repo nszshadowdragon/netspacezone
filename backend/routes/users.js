@@ -1,12 +1,16 @@
+// backend/routes/users.js
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const router = express.Router();
+const path = require('path');
+const fs = require('fs');
 
+const router = express.Router();
 const User = require('../models/User');
 
 let FriendRequest = null;
 try { FriendRequest = require('../models/FriendRequest'); } catch {}
 
+/* ---------- auth middleware (best-effort detection) ---------- */
 let requireAuth = (req, res, next) => next();
 try {
   const am = require('../middleware/authMiddleware');
@@ -42,11 +46,20 @@ function toPublicUrl(req, raw) {
   const explicit = (process.env.UPLOADS_PUBLIC_BASE || '').trim().replace(/\/+$/,'');
   if (explicit) return `${explicit}${p}`;
 
+  // DEV: always point to local backend
+  const host = (req.get('host') || '').toLowerCase();
+  if (/localhost|127\.0\.0\.1/.test(host)) {
+    const proto = (req.protocol && req.protocol.startsWith('http')) ? req.protocol : 'http';
+    const hasPort = /:\d+$/.test(host);
+    const base = hasPort ? `${proto}://${host}` : `${proto}://localhost:5000`;
+    return `${base}${p}`;
+  }
+
+  // PROD / proxied
   const origin = (req.get('origin') || '').trim();
   if (origin) {
     try {
       const u = new URL(origin);
-      // If origin is already api.*, keep it; else switch to api.<apex>
       const isApi = /^api\./i.test(u.hostname);
       const base = isApi ? `${u.protocol}//${u.host}` : apiBaseFromHost(u.host);
       if (base) return `${base}${p}`;
@@ -61,15 +74,14 @@ function toPublicUrl(req, raw) {
     if (base) return `${base}${p}`;
   }
 
-  const host = (req.get('host') || '').trim();
-  if (host) {
+  const plainHost = (req.get('host') || '').trim();
+  if (plainHost) {
     const proto = req.protocol || 'https';
-    const isApi = /^api\./i.test(host);
-    const base = isApi ? `${proto}://${host}` : apiBaseFromHost(host);
+    const isApi = /^api\./i.test(plainHost);
+    const base = isApi ? `${proto}://${plainHost}` : apiBaseFromHost(plainHost);
     if (base) return `${base}${p}`;
   }
 
-  // Final safe fallback
   return `https://api.netspacezone.com${p}`;
 }
 
@@ -155,22 +167,27 @@ router.get('/search', requireAuth, async (req, res) => {
       { username: 1, firstName: 1, lastName: 1, fullName: 1, profileImage: 1, profilePic: 1, friends: 1 }
     ).limit(12).lean();
 
+    // friendship / pending sets (if available)
     const me = meId ? await User.findById(meId, { friends: 1 }).lean() : null;
     const friendSet = new Set((me?.friends || []).map(String));
 
     let pendingTo = new Set();
     if (FriendRequest && meId) {
-      const outgoing = await FriendRequest.find({ from: meId, status: 'pending' }, { to: 1 }).lean();
-      pendingTo = new Set(outgoing.map((r) => String(r.to)));
+      try {
+        const outgoing = await FriendRequest.find({ from: meId, status: 'pending' }, { to: 1 }).lean();
+        pendingTo = new Set(outgoing.map((r) => String(r.to)));
+      } catch {}
     }
 
     const users = raw.map((u) => {
-      const rawPic = u.profileImage || u.profilePic || null;
+      const picRaw = u.profileImage || u.profilePic || null;
+      const profileImageUrl = picRaw ? toPublicUrl(req, picRaw) : null;
+
       return {
         _id: u._id,
         username: u.username,
         fullName: u.fullName || [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username,
-        profileImageUrl: toPublicUrl(req, rawPic), // always absolute, prefers api.<apex>
+        profileImageUrl, // single, fast path (no base64)
         isFriend: meId ? friendSet.has(String(u._id)) : false,
         requestPending: meId ? pendingTo.has(String(u._id)) : false,
       };
