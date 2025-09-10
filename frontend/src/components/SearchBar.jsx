@@ -1,6 +1,8 @@
 // frontend/src/components/SearchBar.jsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import socket from "../socket";                    // ✅ realtime
+import { useAuth } from "../context/AuthContext";  // ✅ know who I am
 
 /* -------- API base (dev defaults to backend) -------- */
 const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
@@ -205,6 +207,8 @@ function pickAnyAvatar(u) {
 
 /* --------------------------------- SearchBar --------------------------------- */
 export default function SearchBar() {
+  const { user: me } = useAuth();                 // ✅ my id for event filtering
+  const myId = String(me?._id || "");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -268,7 +272,7 @@ export default function SearchBar() {
 
       const patched = arr.map((u) => ({
         ...u,
-        _avatarSrc: pickAnyAvatar(u), // ✅ now includes profileImage/profilePic
+        _avatarSrc: pickAnyAvatar(u), // ✅ includes profileImage/profilePic
       }));
 
       setResults(patched);
@@ -349,7 +353,7 @@ export default function SearchBar() {
     }
   }
 
-  // ✅ NEW: Cancel outgoing friend request
+  // Cancel outgoing friend request
   async function handleCancelRequest(e, user, index) {
     e.stopPropagation();
     setResults((prev) =>
@@ -373,14 +377,53 @@ export default function SearchBar() {
       );
     } catch {
       setResults((prev) =>
-        prev.map((u, i) =>
-          i === index ? { ...u, _canceling: false } : u
-        )
+        prev.map((u, i) => (i === index ? { ...u, _canceling: false } : u))
       );
       setErr("Couldn’t cancel request.");
       setDropdownOpen(true);
     }
   }
+
+  // ✅ realtime: flip row state based on friend events (only when they involve me)
+  useEffect(() => {
+    if (!myId) return;
+
+    const setForId = (targetId, patch) =>
+      setResults((prev) =>
+        prev.map((u) =>
+          String(u._id || u.id || "") === String(targetId) ? { ...u, ...patch } : u
+        )
+      );
+
+    const onCreated = ({ fromUserId, toUserId }) => {
+      if (String(fromUserId) === myId) setForId(toUserId, { requestPending: true });
+    };
+    const onCanceled = ({ fromUserId, toUserId }) => {
+      if (String(fromUserId) === myId) setForId(toUserId, { requestPending: false });
+    };
+    const onAccepted = ({ a, b }) => {
+      const other = String(a) === myId ? String(b) : String(b) === myId ? String(a) : "";
+      if (other) setForId(other, { isFriend: true, requestPending: false });
+    };
+    const onRemoved = ({ a, b }) => {
+      const other = String(a) === myId ? String(b) : String(b) === myId ? String(a) : "";
+      if (other) setForId(other, { isFriend: false, requestPending: false });
+    };
+
+    socket.on("friend:request:created", onCreated);
+    socket.on("friend:request:canceled", onCanceled);
+    socket.on("friend:accepted", onAccepted);
+    socket.on("friend:removed", onRemoved);
+    socket.on("friend:declined", onCanceled);
+
+    return () => {
+      socket.off("friend:request:created", onCreated);
+      socket.off("friend:request:canceled", onCanceled);
+      socket.off("friend:accepted", onAccepted);
+      socket.off("friend:removed", onRemoved);
+      socket.off("friend:declined", onCanceled);
+    };
+  }, [myId]);
 
   function onKeyDown(e) {
     if (!dropdownOpen || !results.length) return;

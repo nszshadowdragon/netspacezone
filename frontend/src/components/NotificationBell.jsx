@@ -6,8 +6,9 @@ import { useFriends } from "../context/FriendsContext";
 import useFriendship from "../hooks/useFriendship";
 import FriendsAPI from "../services/friends";
 import AvatarImg from "./AvatarImg";
+import socket from "../socket"; // ✅ realtime
 
-// ---------- helpers ----------
+/* -------------------- helpers -------------------- */
 function timeAgo(d) {
   try {
     const date = typeof d === "string" ? new Date(d) : d;
@@ -38,10 +39,7 @@ function useOutsideClose(open, onClose) {
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
-    function onDoc(e) {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target)) onClose?.();
-    }
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) onClose?.(); }
     function onKey(e) { if (e.key === "Escape") onClose?.(); }
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -53,7 +51,7 @@ function useOutsideClose(open, onClose) {
   return ref;
 }
 
-// ---------- mini fetch for requests ----------
+/* ---------------- mini fetch for requests ---------------- */
 function useRequestLists(open, tab) {
   const [incoming, setIncoming] = useState([]);
   const [outgoing, setOutgoing] = useState([]);
@@ -86,8 +84,9 @@ function useRequestLists(open, tab) {
   return { incoming, setIncoming, outgoing, setOutgoing, loading, err, reload };
 }
 
+/* ---------------- shared request row ---------------- */
 function RequestRow({ item, mode, onDone }) {
-  // Robustly find the "other" user fields for various backend shapes
+  // Robustly extract "other" user identity
   const u =
     item.user ||
     (mode === "incoming" ? item.fromUser || item.from || item.sender : item.toUser || item.to || item.receiver) ||
@@ -103,7 +102,6 @@ function RequestRow({ item, mode, onDone }) {
     item.username || u.username || item.fromUsername || item.toUsername || "";
 
   const {
-    status,
     busy,
     accept,
     decline,
@@ -139,10 +137,11 @@ function RequestRow({ item, mode, onDone }) {
   );
 }
 
+/* ---------------- main bell ---------------- */
 export default function NotificationBell({ className, onViewAll }) {
   const { user, loading: authLoading } = useAuth();
 
-  // Notifications context (All tab)
+  // Notifications (All tab)
   const {
     notifications,
     unreadCount,
@@ -152,7 +151,7 @@ export default function NotificationBell({ className, onViewAll }) {
     removeNotification,
   } = useNotifications();
 
-  // Friends counts (for badge + Requests tab)
+  // Friends counts (Requests tab + badge)
   const { counts, refreshCounts } = useFriends();
 
   const [open, setOpen] = useState(false);
@@ -164,36 +163,45 @@ export default function NotificationBell({ className, onViewAll }) {
   const { incoming, setIncoming, outgoing, setOutgoing, loading: reqLoading, err: reqErr, reload } =
     useRequestLists(open && tab === "requests", reqTab);
 
-  // Unified badge: unread notifications + incoming requests
+  // BADGE = unread notifications + incoming requests
   const totalBadge = Math.max(0, Number(unreadCount || 0) + Number(counts?.incoming || 0));
 
-  // Fetch notifications initially & on open if empty
-  useEffect(() => {
-    if (!authLoading && user && open && tab === "all" && notifications.length === 0) {
-      setLoadingList(true);
-      fetchNotifications().finally(() => setLoadingList(false));
-    }
-  }, [authLoading, user, open, tab, notifications.length, fetchNotifications]);
+  // Throttle All-tab fetches to stop flicker (1.2s window)
+  const lastFetchRef = useRef(0);
+  const maybeFetchAll = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastFetchRef.current < 1200) return;
+    lastFetchRef.current = now;
+    setLoadingList(true);
+    try { await fetchNotifications(); } finally { setLoadingList(false); }
+  }, [fetchNotifications]);
 
-  // Friend request actions from notifications list (All tab)
-  const handleFriendRequestFromNotif = useCallback(
-    async (n, accept) => {
-      try {
-        const otherUsername = n?.actor?.username || n?.fromUsername || "";
-        const otherId = n?.actor?._id || n?.fromUserId || "";
-        if (accept) {
-          await FriendsAPI.acceptRequest({ fromUserId: otherId, username: otherUsername });
-        } else {
-          await FriendsAPI.declineRequest({ fromUserId: otherId, username: otherUsername });
-        }
-        removeNotification(n._id);
-        refreshCounts();
-      } catch (err) {
-        console.error("Friend request action failed", err);
-      }
-    },
-    [removeNotification, refreshCounts]
-  );
+  // Always fetch when opening the panel on All tab (throttled)
+  useEffect(() => {
+    if (!authLoading && user && open && tab === "all") {
+      maybeFetchAll(true);
+    }
+  }, [authLoading, user, open, tab, maybeFetchAll]);
+
+  // Friend events → refresh counts, and if All is open, fetch (throttled)
+  useEffect(() => {
+    const bump = () => {
+      refreshCounts();
+      if (open && tab === "all") maybeFetchAll(false);
+    };
+    socket.on("friend:request:created", bump);
+    socket.on("friend:request:canceled", bump);
+    socket.on("friend:accepted", bump);
+    socket.on("friend:declined", bump);
+    socket.on("friend:removed", bump);
+    return () => {
+      socket.off("friend:request:created", bump);
+      socket.off("friend:request:canceled", bump);
+      socket.off("friend:accepted", bump);
+      socket.off("friend:declined", bump);
+      socket.off("friend:removed", bump);
+    };
+  }, [open, tab, refreshCounts, maybeFetchAll]);
 
   // helpers
   const currentList = reqTab === "incoming" ? incoming : outgoing;
@@ -224,15 +232,11 @@ export default function NotificationBell({ className, onViewAll }) {
             {tab === "all" ? (
               <>
                 <button
-                  onClick={() => {
-                    setLoadingList(true);
-                    fetchNotifications().finally(() => setLoadingList(false));
-                  }}
+                  onClick={() => maybeFetchAll(true)}
                   className="nb-ctrl"
-                  disabled={loadingList}
                   title="Refresh"
                 >
-                  {loadingList ? "Refreshing…" : "Refresh"}
+                  Refresh
                 </button>
                 <button
                   onClick={markAllRead}
@@ -257,49 +261,66 @@ export default function NotificationBell({ className, onViewAll }) {
                 <div className="nb-empty">No notifications yet.</div>
               )}
 
-              {notifications.map((n) => (
-                <div
-                  key={n._id}
-                  className={`nb-item ${n.read ? "read" : "unread"}`}
-                >
-                  <img
-                    src={getProfileImageSrc(n?.actor?.profileImage || n?.fromProfileImage)}
-                    alt={n?.actor?.username || "user"}
-                    className="nb-avatar"
-                  />
-                  <div className="nb-content">
-                    <div className="nb-line">
-                      <strong>@{n?.actor?.username || "Someone"}</strong>{" "}
-                      <span>{String(n.message || "").replace(n?.actor?.username || "", "").trim()}</span>
+              {notifications.map((n) => {
+                // ✅ Use the same RequestRow style for friend requests in "All"
+                if (n.type === "friend_request") {
+                  const item = {
+                    fromUserId: n?.actor?._id || "",
+                    fromUser: n?.actor ? {
+                      _id: n.actor._id,
+                      username: n.actor.username,
+                      profileImage: n.actor.profileImage
+                    } : null,
+                    createdAt: n.createdAt
+                  };
+                  return (
+                    <div key={n._id} style={{ padding: "8px 8px 0" }}>
+                      <RequestRow
+                        item={item}
+                        mode="incoming"
+                        onDone={() => {
+                          markOneRead(n._id);
+                          removeNotification?.(n._id);
+                        }}
+                      />
+                    </div>
+                  );
+                }
+
+                // default rendering (other types)
+                return (
+                  <div
+                    key={n._id}
+                    className={`nb-item ${n.read ? "read" : "unread"}`}
+                  >
+                    <img
+                      src={getProfileImageSrc(n?.actor?.profileImage || n?.fromProfileImage)}
+                      alt={n?.actor?.username || "user"}
+                      className="nb-avatar"
+                    />
+                    <div className="nb-content">
+                      <div className="nb-line">
+                        <strong>@{n?.actor?.username || "Someone"}</strong>{" "}
+                        <span>{String(n.message || "").replace(n?.actor?.username || "", "").trim()}</span>
+                      </div>
+
+                      {n.link && (
+                        <a href={n.link} onClick={() => setOpen(false)} className="nb-link">
+                          View
+                        </a>
+                      )}
+
+                      <div className="nb-time">{timeAgo(n.createdAt)}</div>
                     </div>
 
-                    {n.link && (
-                      <a href={n.link} onClick={() => setOpen(false)} className="nb-link">
-                        View
-                      </a>
+                    {!n.read && (
+                      <button onClick={() => markOneRead(n._id)} className="nb-mark">
+                        Mark read
+                      </button>
                     )}
-
-                    {n.type === "friend_request" && (
-                      <div className="nb-actions">
-                        <button className="nb-accept" onClick={() => handleFriendRequestFromNotif(n, true)}>
-                          Accept
-                        </button>
-                        <button className="nb-decline" onClick={() => handleFriendRequestFromNotif(n, false)}>
-                          Decline
-                        </button>
-                      </div>
-                    )}
-
-                    <div className="nb-time">{timeAgo(n.createdAt)}</div>
                   </div>
-
-                  {!n.read && (
-                    <button onClick={() => markOneRead(n._id)} className="nb-mark">
-                      Mark read
-                    </button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
 
               <div className="nb-footer">
                 <button onClick={onViewAll} className="nb-viewall">View All</button>
@@ -384,24 +405,18 @@ export default function NotificationBell({ className, onViewAll }) {
         .nb-empty{ padding:18px; color:#bbb; font-size:13px; display:flex; align-items:center; gap:8px; justify-content:center; }
         .spin{ animation:spin .8s linear infinite; } @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 
-        .nb-item{
-          display:flex; gap:12px; padding:12px; border-bottom:1px solid #1e1e1e;
-          background:#101010; color:#ffe066;
-        }
+        .nb-item{ display:flex; gap:12px; padding:12px; border-bottom:1px solid #1e1e1e; background:#101010; color:#ffe066; }
         .nb-item.read{ background:#0f0f0f; color:#cbb25a; }
         .nb-avatar{ width:40px; height:40px; border-radius:999px; object-fit:cover; border:1px solid #2a2a2a; }
         .nb-content{ flex:1; min-width:0; }
         .nb-line{ font-size:14px; }
         .nb-link{ font-size:13px; text-decoration:underline; color:#ffe066; }
         .nb-time{ font-size:12px; color:#9a9a9a; margin-top:2px; }
-        .nb-mark{
-          align-self:center; background:#111; color:#fff; border:1px solid #111;
-          border-radius:10px; padding:6px 10px; font-weight:800; cursor:pointer; white-space:nowrap;
-        }
+        .nb-mark{ align-self:center; background:#111; color:#fff; border:1px solid #111; border-radius:10px; padding:6px 10px; font-weight:800; cursor:pointer; white-space:nowrap; }
         .nb-footer{ padding:12px; border-top:1px solid #222; text-align:center; }
         .nb-viewall{ background:#ffe066; color:#111; border:none; border-radius:6px; font-weight:700; padding:6px 18px; cursor:pointer; }
 
-        /* Requests */
+        /* Requests (shared) */
         .nb-reqTabs{ display:flex; gap:8px; padding:8px; border-bottom:1px solid #1f1f1f; background:#0f0f0f; position:sticky; top:0; z-index:2; }
         .nb-reqTab{ padding:6px 10px; border-radius:8px; border:1px solid #2b2b2b; background:#141414; color:#ffe066; cursor:pointer; font-weight:700; font-size:13px; }
         .nb-reqTab.active{ background:#1b1b1b; box-shadow:inset 0 0 0 1px #333; }

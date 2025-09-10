@@ -1,6 +1,7 @@
 // backend/routes/friends.js
 const express = require("express");
 const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken");
 const Friendship = require("../models/Friendship");
 const User = require("../models/User");
 
@@ -10,12 +11,48 @@ const router = express.Router();
 function authId(req) {
   return String(req.user?._id || req.userId || req.authUserId || "").trim();
 }
-function requireAuth(req, res, next) {
-  const id = authId(req);
-  if (!id) return res.status(401).send("Not authenticated");
-  req.meId = id;
-  next();
+
+/** Decode JWT from Authorization or cookie if req.user is not set */
+function ensureAuthFromToken(req) {
+  if (authId(req)) return authId(req);
+
+  const header = req.headers.authorization || req.headers.Authorization || "";
+  const cookieToken =
+    req.cookies?.token || req.cookies?.jwt || req.cookies?.authToken || "";
+
+  const tryDecode = (tok) => {
+    const secrets = [
+      process.env.JWT_SECRET,
+      process.env.JWT_KEY,
+      process.env.TOKEN_SECRET,
+    ].filter(Boolean);
+    for (const sec of secrets) {
+      try {
+        const dec = jwt.verify(tok, sec);
+        const uid =
+          String(dec?.id || dec?._id || dec?.userId || dec?.uid || "").trim();
+        if (uid) {
+          req.user = req.user || {};
+          req.user._id = uid;
+          return uid;
+        }
+      } catch (_) {}
+    }
+    return "";
+  };
+
+  if (header.startsWith("Bearer ")) {
+    const tok = header.slice(7).trim();
+    const uid = tryDecode(tok);
+    if (uid) return uid;
+  }
+  if (cookieToken) {
+    const uid = tryDecode(cookieToken);
+    if (uid) return uid;
+  }
+  return "";
 }
+
 function normPair(a, b) {
   const A = String(a), B = String(b);
   return A < B ? { userA: A, userB: B, pairKey: `${A}:${B}` } : { userA: B, userB: A, pairKey: `${B}:${A}` };
@@ -31,10 +68,34 @@ async function resolveUserId({ userId, username }) {
 function statusFor(doc, meId, otherId) {
   if (!doc) return "none";
   if (doc.status === "accepted") return "friends";
-  // pending
-  if (String(doc.requestedBy) === meId && String(doc.requestedTo) === otherId) return "pending";   // I sent
-  if (String(doc.requestedTo) === meId && String(doc.requestedBy) === otherId) return "incoming";  // they sent
+  if (String(doc.requestedBy) === meId && String(doc.requestedTo) === otherId) return "pending";
+  if (String(doc.requestedTo) === meId && String(doc.requestedBy) === otherId) return "incoming";
   return "none";
+}
+function requireAuth(req, res, next) {
+  const id = ensureAuthFromToken(req);
+  if (!id) return res.status(401).send("Not authenticated");
+  req.meId = id;
+  next();
+}
+
+/* ---- helpers for targeted notifications ---- */
+async function buildActor(uId) {
+  const u = await User.findById(uId).select("_id username profileImage profilePic").lean();
+  if (!u) return null;
+  return { _id: String(u._id), username: u.username, profileImage: u.profileImage || u.profilePic || "" };
+}
+/** 
+ * Emit to the user's room AND broadcast with {toUserId} fallback so clients that
+ * haven't joined yet still receive and locally filter.
+ */
+function emitNotif(req, toUserId, payload) {
+  const io = req.app.get("io");
+  if (!io) return;
+  // room-target
+  io.to(`user:${toUserId}`).emit("notification:new", payload);
+  // broadcast fallback with explicit target so the client can filter
+  io.emit("notification:new", { ...payload, toUserId: String(toUserId) });
 }
 
 /* ----------------- routes ----------------- */
@@ -67,7 +128,6 @@ router.post("/request", requireAuth, async (req, res) => {
 
     if (existing) {
       if (existing.status === "accepted") return res.json({ status: "friends" });
-      // pending: if I already sent, keep pending; if they sent, auto-accept
       const alreadyMine = String(existing.requestedBy) === req.meId;
       if (alreadyMine) return res.json({ status: "pending" });
       // they sent → accept
@@ -76,6 +136,19 @@ router.post("/request", requireAuth, async (req, res) => {
       existing.requestedTo = undefined;
       await existing.save();
       try { req.app.get("io")?.emit("friend:accepted", { a: userA, b: userB }); } catch {}
+      // notify original requester (they get accepted)
+      const actor = await buildActor(req.meId);
+      if (actor) {
+        emitNotif(req, toId, {
+          _id: new mongoose.Types.ObjectId().toString(),
+          type: "friend_accept",
+          actor,
+          message: " accepted your friend request",
+          link: actor.username ? `/profile/${actor.username}` : "",
+          createdAt: new Date().toISOString(),
+          read: false,
+        });
+      }
       return res.json({ status: "friends" });
     }
 
@@ -87,6 +160,21 @@ router.post("/request", requireAuth, async (req, res) => {
     });
 
     try { req.app.get("io")?.emit("friend:request:created", { fromUserId: req.meId, toUserId: toId, id: doc._id }); } catch {}
+
+    // notify receiver for All tab
+    const actor = await buildActor(req.meId);
+    if (actor) {
+      emitNotif(req, toId, {
+        _id: new mongoose.Types.ObjectId().toString(),
+        type: "friend_request",
+        actor,
+        message: " sent you a friend request",
+        link: actor.username ? `/profile/${actor.username}` : "",
+        createdAt: new Date().toISOString(),
+        read: false,
+      });
+    }
+
     return res.status(201).json({ status: "pending" });
   } catch (e) {
     console.error("friends/request", e);
@@ -94,7 +182,7 @@ router.post("/request", requireAuth, async (req, res) => {
   }
 });
 
-// POST /cancel { toUserId?, username? }  (cancel my outgoing pending)
+// POST /cancel { toUserId?, username? }
 router.post("/cancel", requireAuth, async (req, res) => {
   try {
     const toId = await resolveUserId({ userId: req.body.toUserId, username: req.body.username });
@@ -114,7 +202,7 @@ router.post("/cancel", requireAuth, async (req, res) => {
   }
 });
 
-// POST /accept { fromUserId?, username? }  (accept their incoming)
+// POST /accept { fromUserId?, username? }
 router.post("/accept", requireAuth, async (req, res) => {
   try {
     const fromId = await resolveUserId({ userId: req.body.fromUserId, username: req.body.username });
@@ -131,6 +219,21 @@ router.post("/accept", requireAuth, async (req, res) => {
     await doc.save();
 
     try { req.app.get("io")?.emit("friend:accepted", { a: userA, b: userB }); } catch {}
+
+    // notify original sender (their request was accepted)
+    const actor = await buildActor(req.meId);
+    if (actor) {
+      emitNotif(req, fromId, {
+        _id: new mongoose.Types.ObjectId().toString(),
+        type: "friend_accept",
+        actor,
+        message: " accepted your friend request",
+        link: actor.username ? `/profile/${actor.username}` : "",
+        createdAt: new Date().toISOString(),
+        read: false,
+      });
+    }
+
     return res.json({ status: "friends" });
   } catch (e) {
     console.error("friends/accept", e);
@@ -138,7 +241,7 @@ router.post("/accept", requireAuth, async (req, res) => {
   }
 });
 
-// POST /decline { fromUserId?, username? }  (decline incoming)
+// POST /decline { fromUserId?, username? }
 router.post("/decline", requireAuth, async (req, res) => {
   try {
     const fromId = await resolveUserId({ userId: req.body.fromUserId, username: req.body.username });
@@ -158,7 +261,7 @@ router.post("/decline", requireAuth, async (req, res) => {
   }
 });
 
-// POST /unfriend { userId?, username? }  (remove accepted friendship)
+// POST /unfriend { userId?, username? }
 router.post("/unfriend", requireAuth, async (req, res) => {
   try {
     const otherId = await resolveUserId({ userId: req.body.userId, username: req.body.username });
@@ -193,7 +296,7 @@ router.get("/counts", requireAuth, async (req, res) => {
   }
 });
 
-// GET /incoming  → pending requests sent TO me
+// GET /incoming
 router.get("/incoming", requireAuth, async (req, res) => {
   try {
     const rows = await Friendship.find({ status: "pending", requestedTo: req.meId })
@@ -222,7 +325,7 @@ router.get("/incoming", requireAuth, async (req, res) => {
   }
 });
 
-// GET /outgoing  → pending requests I sent
+// GET /outgoing
 router.get("/outgoing", requireAuth, async (req, res) => {
   try {
     const rows = await Friendship.find({ status: "pending", requestedBy: req.meId })
@@ -250,7 +353,7 @@ router.get("/outgoing", requireAuth, async (req, res) => {
   }
 });
 
-// GET /list  → all accepted friends (return the "other" user)
+// GET /list
 router.get("/list", requireAuth, async (req, res) => {
   try {
     const rows = await Friendship.find({
