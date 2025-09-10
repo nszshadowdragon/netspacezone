@@ -47,7 +47,9 @@ export default function ProfilePage() {
   const { user } = useAuth();
 
   const [profileUser, setProfileUser] = useState(null);
-  const [friendship, setFriendship] = useState("none");
+  const [friendship, setFriendship] = useState("none"); // self|none|incoming|pending|friends
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState("");
   const [confirmUnfriendOpen, setConfirmUnfriendOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
@@ -101,6 +103,7 @@ export default function ProfilePage() {
     };
   }, [routeUsername, user]);
 
+  // Load friendship status (supports userId + username in case backend expects either)
   useEffect(() => {
     if (isSelf) {
       setFriendship("self");
@@ -110,23 +113,24 @@ export default function ProfilePage() {
     async function loadStatus() {
       if (!user || !profileUser) return;
       try {
-        const res = await fetch(
-          `${API_BASE}/api/users/friends/status?userId=${encodeURIComponent(
-            profileUser._id
-          )}`,
-          {
-            credentials: "include",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
-            },
-          }
-        );
+        const qs = new URLSearchParams({
+          userId: String(profileUser._id || ""),
+          username: String(profileUser.username || ""),
+        });
+        const res = await fetch(`${API_BASE}/api/users/friends/status?${qs.toString()}`, {
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
+          },
+        });
         if (!cancelled) {
           if (res.ok) {
             const data = await res.json().catch(() => ({}));
             setFriendship(data?.status || "none");
           } else if (res.status === 404) {
+            setFriendship("none");
+          } else {
             setFriendship("none");
           }
         }
@@ -138,10 +142,12 @@ export default function ProfilePage() {
     return () => {
       cancelled = true;
     };
-  }, [isSelf, user?._id, profileUser?._id]);
+  }, [isSelf, user?._id, profileUser?._id, profileUser?.username]);
 
+  // ---- Actions ----
   async function handleAddFriend() {
-    if (!user || !profileUser) return;
+    if (!user || !profileUser || busy) return;
+    setBusy(true);
     try {
       const res = await fetch(`${API_BASE}/api/users/friends/request`, {
         method: "POST",
@@ -150,22 +156,111 @@ export default function ProfilePage() {
           "Content-Type": "application/json",
           Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
         },
-        body: JSON.stringify({ toUserId: profileUser._id }),
+        body: JSON.stringify({ toUserId: profileUser._id, username: profileUser.username }),
       });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
         setFriendship(data?.status || "pending");
+        setToast("Friend request sent");
       } else {
         const msg = await res.text().catch(() => "");
-        alert(`Could not send friend request. ${msg || ""}`.trim());
+        setToast(`Could not send request. ${msg}`.trim());
       }
     } catch {
-      alert("Network error sending friend request.");
+      setToast("Network error sending request.");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setToast(""), 1800);
+    }
+  }
+
+  async function handleCancelRequest() {
+    if (!user || !profileUser || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/users/friends/cancel`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
+        },
+        body: JSON.stringify({ toUserId: profileUser._id, username: profileUser.username }),
+      });
+      if (res.ok) {
+        setFriendship("none");
+        setToast("Request canceled");
+      } else {
+        const msg = await res.text().catch(() => "");
+        setToast(`Could not cancel. ${msg}`.trim());
+      }
+    } catch {
+      setToast("Network error canceling request.");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setToast(""), 1800);
+    }
+  }
+
+  async function handleAcceptFriend() {
+    if (!user || !profileUser || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/users/friends/accept`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
+        },
+        body: JSON.stringify({ fromUserId: profileUser._id, username: profileUser.username }),
+      });
+      if (res.ok) {
+        setFriendship("friends");
+        setToast("You are now friends");
+      } else {
+        const msg = await res.text().catch(() => "");
+        setToast(`Could not accept. ${msg}`.trim());
+      }
+    } catch {
+      setToast("Network error accepting request.");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setToast(""), 1800);
+    }
+  }
+
+  async function handleDeclineFriend() {
+    if (!user || !profileUser || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/users/friends/decline`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
+        },
+        body: JSON.stringify({ fromUserId: profileUser._id, username: profileUser.username }),
+      });
+      if (res.ok) {
+        setFriendship("none");
+        setToast("Request declined");
+      } else {
+        const msg = await res.text().catch(() => "");
+        setToast(`Could not decline. ${msg}`.trim());
+      }
+    } catch {
+      setToast("Network error declining request.");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setToast(""), 1800);
     }
   }
 
   async function handleConfirmUnfriend() {
-    if (!user || !profileUser) return;
+    if (!user || !profileUser || busy) return;
+    setBusy(true);
     try {
       const res = await fetch(`${API_BASE}/api/users/friends/unfriend`, {
         method: "POST",
@@ -174,22 +269,28 @@ export default function ProfilePage() {
           "Content-Type": "application/json",
           Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
         },
-        body: JSON.stringify({ userId: profileUser._id }),
+        body: JSON.stringify({ userId: profileUser._id, username: profileUser.username }),
       });
       if (res.ok) {
         setFriendship("none");
         setConfirmUnfriendOpen(false);
+        setToast("Removed from friends");
       } else {
         const msg = await res.text().catch(() => "");
-        alert(`Could not unfriend. ${msg || ""}`.trim());
+        setToast(`Could not unfriend. ${msg}`.trim());
       }
     } catch {
-      alert("Network error trying to unfriend.");
+      setToast("Network error trying to unfriend.");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setToast(""), 1800);
     }
   }
 
-  const showAddBtn = !isSelf && (friendship === "none" || friendship === "incoming");
+  // Button visibility
+  const showAddBtn = !isSelf && friendship === "none";
   const showRequested = !isSelf && friendship === "pending";
+  const showIncoming = !isSelf && friendship === "incoming";
   const showUnfriend = !isSelf && friendship === "friends";
 
   return (
@@ -217,7 +318,7 @@ export default function ProfilePage() {
         .pp-left{ flex:1; }
         .pp-center{ flex:1; text-align:center; }
         .pp-right{ flex:1; text-align:right; }
-        .pp-actions{ margin-top:.8rem; display:flex; gap:.5rem; flex-wrap:wrap; }
+        .pp-actions{ margin-top:.8rem; display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
         .pp-username{ margin:0; font-size:clamp(20px,3.2vw,28px); }
         .pp-main{ display:flex; gap:2rem; }
         .pp-col-left{ flex:2; }
@@ -234,10 +335,12 @@ export default function ProfilePage() {
         .pp-btn{ border:none; padding:.45rem .85rem; border-radius:6px; cursor:pointer; font-weight:700; }
         .pp-btn.gold{ background:#ffe259; color:#000; }
         .pp-btn.action{ border:1px solid #333; background:rgba(255,226,89,.2); color:#ffe259; }
+        .pp-btn[disabled]{ opacity:.55; cursor:not-allowed; }
         textarea.pp-input{ width:100%; padding:.5rem; border-radius:6px; background:transparent; border:1px solid #333; color:#ffe259; }
         .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; z-index:50; }
         .modal{ background:#111; border:1px solid #444; border-radius:10px; padding:1rem; width:min(420px,92vw); box-shadow:0 0 18px rgba(255,226,89,.15); }
         .modal-actions{ display:flex; gap:.5rem; justify-content:flex-end; }
+        .pp-toast{ font-size:12px; color:#bbb; min-height:18px; }
       `}</style>
 
       <div className="pp-container">
@@ -251,26 +354,43 @@ export default function ProfilePage() {
 
             <div className="pp-actions">
               {showAddBtn && (
-                <button className="pp-btn action" onClick={handleAddFriend} aria-label="Add Friend">
+                <button className="pp-btn action" onClick={handleAddFriend} aria-label="Add Friend" disabled={busy}>
                   Add
                 </button>
               )}
+
+              {showIncoming && (
+                <>
+                  <button className="pp-btn gold" onClick={handleAcceptFriend} disabled={busy} aria-label="Accept Friend">
+                    Accept
+                  </button>
+                  <button className="pp-btn action" onClick={handleDeclineFriend} disabled={busy} aria-label="Decline Friend">
+                    Decline
+                  </button>
+                </>
+              )}
+
               {showRequested && (
-                <button className="pp-btn action" disabled title="Request sent">
-                  Requested
+                <button className="pp-btn action" onClick={handleCancelRequest} disabled={busy} title="Cancel request">
+                  Cancel
                 </button>
               )}
+
               {showUnfriend && (
                 <button
                   className="pp-btn action"
                   onClick={() => setConfirmUnfriendOpen(true)}
                   aria-label="Unfriend"
+                  disabled={busy}
                 >
                   Unfriend
                 </button>
               )}
-              <button className="pp-btn action">Message</button>
-              <button className="pp-btn action">Share</button>
+
+              <button className="pp-btn action" disabled={busy}>Message</button>
+              <button className="pp-btn action" disabled={busy}>Share</button>
+
+              <span className="pp-toast">{toast}</span>
             </div>
           </div>
 
@@ -335,10 +455,10 @@ export default function ProfilePage() {
               You can add them again later. This action won’t delete messages.
             </p>
             <div className="modal-actions">
-              <button className="pp-btn action" onClick={() => setConfirmUnfriendOpen(false)}>
+              <button className="pp-btn action" onClick={() => setConfirmUnfriendOpen(false)} disabled={busy}>
                 Cancel
               </button>
-              <button className="pp-btn gold" onClick={handleConfirmUnfriend}>
+              <button className="pp-btn gold" onClick={handleConfirmUnfriend} disabled={busy}>
                 Confirm Unfriend
               </button>
             </div>

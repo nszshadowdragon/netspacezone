@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import SearchBar from "./SearchBar";
 import { useAuth } from "../context/AuthContext";
+import NotificationBell from "./NotificationBell";
+import NotificationsPopup from "./NotificationsPopup";
 
 /* --------------------- helpers --------------------- */
 function isLocalhost() {
@@ -57,10 +59,9 @@ export default function Navbar({ unreadCount = 0 }) {
   const [currentUser, setCurrentUser] = useState(user);
   const [avatarVersion, setAvatarVersion] = useState(() => localStorage.getItem("nsz:avatar:v") || "");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [showAllPopup, setShowAllPopup] = useState(false);
+  const [showAllPopup, setShowAllPopup] = useState(false); // full-screen NotificationsPopup
 
   const dropdownRef = useRef(null);
-  const bellRef = useRef(null);
   const navRef = useRef(null);
 
   const [navH, setNavH] = useState(92);
@@ -104,14 +105,11 @@ export default function Navbar({ unreadCount = 0 }) {
     };
   }, []);
 
-  // close on outside click
+  // close menu on outside click
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target) && !e.target.closest("#menuBtn")) {
         setMenuOpen(false);
-      }
-      if (bellRef.current && !bellRef.current.contains(e.target) && !e.target.closest("#bellBtn")) {
-        setShowAllPopup(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -156,43 +154,45 @@ export default function Navbar({ unreadCount = 0 }) {
 
   const profilePath = currentUser?.username ? `/profile/${currentUser.username}` : "/profile";
 
-  const handleLogout = useCallback(async (e) => {
-    e?.preventDefault?.();
-    e?.stopPropagation?.();
-    try {
-      if (typeof logout === "function") await Promise.resolve(logout());
+  const handleLogout = useCallback(
+    async (e) => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
       try {
-        await fetch(`${apiHost()}/api/auth/logout`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-        });
-      } catch {}
-      try { localStorage.removeItem("token"); } catch {}
-      try {
-        if ("BroadcastChannel" in window) {
-          const bc = new BroadcastChannel("nsz_auth");
-          bc.postMessage({ type: "logout" });
-          bc.close();
-        }
-        window.dispatchEvent(new CustomEvent("nsz:user-logged-out"));
-      } catch {}
-    } finally {
-      setMenuOpen(false);
-      navigate("/landing", { replace: true });
-    }
-  }, [logout, navigate]);
+        if (typeof logout === "function") await Promise.resolve(logout());
+        try {
+          await fetch(`${apiHost()}/api/auth/logout`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch {}
+        try {
+          localStorage.removeItem("token");
+        } catch {}
+        try {
+          if ("BroadcastChannel" in window) {
+            const bc = new BroadcastChannel("nsz_auth");
+            bc.postMessage({ type: "logout" });
+            bc.close();
+          }
+          window.dispatchEvent(new CustomEvent("nsz:user-logged-out"));
+        } catch {}
+      } finally {
+        setMenuOpen(false);
+        navigate("/landing", { replace: true });
+      }
+    },
+    [logout, navigate]
+  );
 
   return (
     <>
-      {/* Responsive tweaks; desktop/laptop stays exactly as laid out below */}
+      {/* Responsive tweaks */}
       <style>{`
-        /* Hide username on smaller screens */
         @media (max-width: 900px){
           .nsz-username { display: none !important; }
         }
-
-        /* Phone layout: center rows, stretch search, space-evenly icons */
         @media (max-width: 768px){
           .nsz-bar { 
             flex-wrap: wrap !important; 
@@ -201,11 +201,10 @@ export default function Navbar({ unreadCount = 0 }) {
             padding: 10px 12px !important;
             height: auto !important;
           }
-          /* Logo: centered, 50% wider, 15% taller */
           .nsz-logo { 
             order: 1; 
-            height: 64px !important;             /* ~15% up from 56px */
-            transform: scale(1.5, 1.15);          /* 50% wider, 15% taller */
+            height: 64px !important;
+            transform: scale(1.5, 1.15);
             transform-origin: center; 
             margin: 0 auto !important; 
             display: block !important;
@@ -223,29 +222,26 @@ export default function Navbar({ unreadCount = 0 }) {
             align-items: center !important;
             gap: 18px !important;
           }
-          #bellBtn { width: 34px !important; height: 34px !important; font-size: .95rem !important; }
+          /* adapt the new bell size */
+          .nb-bell { width: 34px !important; height: 34px !important; font-size: .95rem !important; }
           .nsz-avatar { width: 40px !important; height: 40px !important; border-width: 1.5px !important; }
           #menuBtn { font-size: 1.8rem !important; }
         }
-
-        /* Extra-small phones */
         @media (max-width: 420px){
           .nsz-logo { 
-            height: 60px !important;             /* ~15% up from 52px */
+            height: 60px !important;
             transform: scale(1.5, 1.15);
           }
-          #bellBtn { width: 30px !important; height: 30px !important; }
+          .nb-bell { width: 30px !important; height: 30px !important; }
           .nsz-avatar { width: 36px !important; height: 36px !important; }
           #menuBtn { font-size: 1.6rem !important; }
         }
-
-        /* Desktop: keep your laptop sizing; constrain search width there */
         @media (min-width: 901px){
           .nsz-search { min-width: 280px; max-width: 480px; }
         }
       `}</style>
 
-      {/* DESKTOP/LAPTOP BASELINE (unchanged) */}
+      {/* TOP BAR */}
       <div
         ref={navRef}
         className="nsz-bar"
@@ -262,7 +258,7 @@ export default function Navbar({ unreadCount = 0 }) {
           padding: "0 24px",
         }}
       >
-        {/* Logo (kept as-is for laptop/desktop) */}
+        {/* Logo */}
         <img src="/assets/nsz-logo2.png" alt="NSZ Logo" className="nsz-logo" style={{ height: 182 }} />
 
         {/* Search */}
@@ -270,66 +266,13 @@ export default function Navbar({ unreadCount = 0 }) {
           <SearchBar />
         </div>
 
-        {/* Actions */}
+        {/* Right actions */}
         <div className="nsz-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {/* Bell */}
-          <div style={{ position: "relative" }} ref={bellRef}>
-            <button
-              id="bellBtn"
-              onClick={() => setShowAllPopup((p) => !p)}
-              style={{
-                background: "none",
-                border: "2px solid " + GOLD,
-                borderRadius: "50%",
-                width: 36,
-                height: 36,
-                color: GOLD,
-                fontSize: "1.1rem",
-                cursor: "pointer",
-              }}
-              aria-label="Notifications"
-            >
-              🔔
-            </button>
-            {unreadCount > 0 && (
-              <span
-                style={{
-                  position: "absolute",
-                  top: -4,
-                  right: -4,
-                  background: "#ef4444",
-                  color: "#fff",
-                  fontSize: 10,
-                  padding: "0 5px",
-                  borderRadius: 999,
-                  lineHeight: "16px",
-                  height: 18,
-                }}
-              >
-                {unreadCount}
-              </span>
-            )}
-
-            {showAllPopup && (
-              <div
-                style={{
-                  position: "absolute",
-                  top: 46,
-                  right: 0,
-                  background: "#111",
-                  border: `1.5px solid ${GOLD}`,
-                  borderRadius: 12,
-                  padding: 16,
-                  zIndex: 1002,
-                  width: 260,
-                  color: "#fff",
-                }}
-              >
-                <h4 style={{ marginBottom: 8, textAlign: "center" }}>Notifications</h4>
-                {unreadCount > 0 ? <p>You have {unreadCount} new notification(s).</p> : <p>No new notifications</p>}
-              </div>
-            )}
-          </div>
+          {/* Unified Notification Bell (with Requests tab) */}
+          <NotificationBell
+            className="nb-anchor"
+            onViewAll={() => setShowAllPopup(true)}
+          />
 
           {/* Avatar + username -> Profile */}
           <Link
@@ -375,7 +318,7 @@ export default function Navbar({ unreadCount = 0 }) {
         </div>
       </div>
 
-      {/* RIGHT-EDGE DROPDOWN — stays inside content area, below bar */}
+      {/* RIGHT-EDGE DROPDOWN */}
       {menuOpen && (
         <div
           ref={dropdownRef}
@@ -403,7 +346,7 @@ export default function Navbar({ unreadCount = 0 }) {
               style={{
                 margin: "6px 6px",
                 padding: "12px 16px",
-                border: `1px solid ${GOLD}`,
+                border: `1.5px solid ${GOLD}`,
                 borderRadius: 10,
                 color: GOLD,
                 fontWeight: 700,
@@ -424,7 +367,7 @@ export default function Navbar({ unreadCount = 0 }) {
             style={{
               margin: "6px 6px",
               padding: "12px 16px",
-              border: `1px solid ${GOLD}`,
+              border: `1.5px solid ${GOLD}`,
               borderRadius: 10,
               background: "transparent",
               color: "#ff4444",
@@ -442,6 +385,9 @@ export default function Navbar({ unreadCount = 0 }) {
           </button>
         </div>
       )}
+
+      {/* Full-screen Notifications / Requests overlay */}
+      {showAllPopup && <NotificationsPopup onClose={() => setShowAllPopup(false)} />}
     </>
   );
 }

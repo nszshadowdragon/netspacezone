@@ -69,7 +69,7 @@ function fixDevAbsolute(url) {
  */
 function buildImgCandidates(raw) {
   if (!raw) return [];
-  if (/^data:/i.test(raw)) return [raw]; // already an inline image
+  if (/^data:/i.test(raw)) return [raw];
   if (/^https?:\/\//i.test(raw)) return [fixDevAbsolute(raw)];
   const p = normalizeUploadsPath(raw);
   return API_BASE ? [`${API_BASE}${p}`] : [p];
@@ -91,7 +91,6 @@ function SmartAvatar({ src, size = 36, alt = "", style, eager = true }) {
   // preload and decode before showing <img>
   useEffect(() => {
     if (!current) return;
-    // hint: preload
     try {
       const link = document.createElement("link");
       link.rel = "preload";
@@ -116,13 +115,11 @@ function SmartAvatar({ src, size = 36, alt = "", style, eager = true }) {
         setIdx((n) => n + 1);
         setReady(false);
       } else {
-        // all failed; we'll show the skeleton then fallback to DEFAULT_AVATAR img
         setReady(true);
       }
     };
     img.src = current;
 
-    // soft-prefetch next candidate
     if (candidates[idx + 1]) {
       const img2 = new Image();
       img2.decoding = "async";
@@ -147,7 +144,6 @@ function SmartAvatar({ src, size = 36, alt = "", style, eager = true }) {
 
   return (
     <span style={boxStyle} aria-hidden={alt ? undefined : true}>
-      {/* skeleton while loading/decoding */}
       {!ready && (
         <span
           style={{
@@ -160,11 +156,8 @@ function SmartAvatar({ src, size = 36, alt = "", style, eager = true }) {
           }}
         />
       )}
-      <style>{`
-        @keyframes nszPulse { 0%{opacity:.6} 50%{opacity:.9} 100%{opacity:.6} }
-      `}</style>
+      <style>{`@keyframes nszPulse { 0%{opacity:.6} 50%{opacity:.9} 100%{opacity:.6} }`}</style>
 
-      {/* only render the actual image when decoded */}
       {ready && (
         <img
           src={current || DEFAULT_AVATAR}
@@ -177,7 +170,6 @@ function SmartAvatar({ src, size = 36, alt = "", style, eager = true }) {
           fetchPriority={eager ? "high" : "auto"}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
           onError={(e) => {
-            // last-resort fallback if decoded image still errors when painted
             if (e.currentTarget.src !== DEFAULT_AVATAR) {
               e.currentTarget.src = DEFAULT_AVATAR;
             }
@@ -192,16 +184,21 @@ function SmartAvatar({ src, size = 36, alt = "", style, eager = true }) {
 /**
  * Prefer order:
  * 1) profileImageUrl (absolute URL from API)
- * 2) profilePic (legacy stored string)
- * (Note: profileImageData was removed from API for speed)
+ * 2) profileImage / profilePic (uploads path/relative)
+ * 3) avatarUrl / avatar / imageUrl (fallbacks)
  */
 function pickAnyAvatar(u) {
   if (!u) return "";
-  if (typeof u.profileImageUrl === "string" && u.profileImageUrl.trim()) {
-    return u.profileImageUrl;
-  }
-  if (typeof u.profilePic === "string" && u.profilePic.trim()) {
-    return u.profilePic;
+  const candidates = [
+    u.profileImageUrl,
+    u.profileImage,     // ✅ added
+    u.profilePic,       // ✅ added
+    u.avatarUrl,
+    u.avatar,
+    u.imageUrl,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c;
   }
   return "";
 }
@@ -271,7 +268,7 @@ export default function SearchBar() {
 
       const patched = arr.map((u) => ({
         ...u,
-        _avatarSrc: pickAnyAvatar(u),
+        _avatarSrc: pickAnyAvatar(u), // ✅ now includes profileImage/profilePic
       }));
 
       setResults(patched);
@@ -289,7 +286,7 @@ export default function SearchBar() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Light debounce (reduce chatter but keep feel fast)
+  // Light debounce
   useEffect(() => {
     const t = setTimeout(() => performSearch(query), 120);
     return () => clearTimeout(t);
@@ -331,7 +328,7 @@ export default function SearchBar() {
         body: JSON.stringify({ toUserId: user._id || user.id || user.userId }),
       });
       if (!res.ok) throw new Error();
-      const payload = await res.json();
+      const payload = await res.json().catch(() => ({}));
       setResults((prev) =>
         prev.map((u, i) =>
           i === index
@@ -348,6 +345,39 @@ export default function SearchBar() {
         prev.map((u, i) => (i === index ? { ...u, requestPending: false } : u))
       );
       setErr("Couldn’t send request.");
+      setDropdownOpen(true);
+    }
+  }
+
+  // ✅ NEW: Cancel outgoing friend request
+  async function handleCancelRequest(e, user, index) {
+    e.stopPropagation();
+    setResults((prev) =>
+      prev.map((u, i) => (i === index ? { ...u, _canceling: true } : u))
+    );
+    try {
+      const res = await fetch(`${API_BASE}/api/users/friends/cancel`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
+        },
+        body: JSON.stringify({ toUserId: user._id || user.id || user.userId }),
+      });
+      if (!res.ok) throw new Error();
+      setResults((prev) =>
+        prev.map((u, i) =>
+          i === index ? { ...u, requestPending: false, _canceling: false } : u
+        )
+      );
+    } catch {
+      setResults((prev) =>
+        prev.map((u, i) =>
+          i === index ? { ...u, _canceling: false } : u
+        )
+      );
+      setErr("Couldn’t cancel request.");
       setDropdownOpen(true);
     }
   }
@@ -422,7 +452,6 @@ export default function SearchBar() {
           {!loading &&
             results.map((u, i) => {
               const isActive = i === highlightIndex;
-              // Eager-load only the first few visible entries; others lazy to avoid network stampede
               const eager = i < 6;
               return (
                 <div
@@ -474,17 +503,22 @@ export default function SearchBar() {
                       Friends
                     </span>
                   ) : u.requestPending ? (
-                    <span
+                    <button
+                      onClick={(e) => handleCancelRequest(e, u, i)}
                       style={{
-                        fontSize: 12,
-                        color: "#ffd966",
-                        padding: "0.25rem 0.5rem",
-                        border: "1px solid #a68d2a",
+                        fontSize: 13,
+                        fontWeight: 800,
+                        padding: "0.35rem 0.6rem",
                         borderRadius: 6,
+                        border: "1px solid #664",
+                        background: "#1a1a1a",
+                        color: "#ffd966",
+                        opacity: u._canceling ? 0.6 : 1,
                       }}
+                      title="Cancel request"
                     >
-                      Requested
-                    </span>
+                      {u._canceling ? "Canceling…" : "Cancel"}
+                    </button>
                   ) : (
                     <button
                       onClick={(e) => handleAddFriend(e, u, i)}
