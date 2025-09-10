@@ -233,6 +233,8 @@ app.get("/api/gallery/folders", async (req, res) => {
 /* ------------ Your existing route modules ------------ */
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/gallery", require("./routes/galleryRoutes"));
+/* ✅ NEW: Friends API mount */
+app.use("/api/users/friends", require("./routes/friends"));
 app.use("/api/users", require("./routes/users"));
 
 app.get("/healthz", (_req, res) =>
