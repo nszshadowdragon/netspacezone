@@ -1,4 +1,3 @@
-// frontend/src/components/ImagePopupViewer.jsx
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import socket, { connectSocket, joinGallery, leaveGallery } from "../socket";
 import { useAuth } from "../context/AuthContext";
@@ -10,10 +9,25 @@ const RADIUS = 14;
 
 /* ---------------- env + api ---------------- */
 function apiBase() {
-  const env = (import.meta.env?.VITE_API_BASE || "").replace(/\/$/, "");
+  const env = (import.meta.env?.VITE_API_BASE || import.meta.env?.VITE_API_BASE_URL || "").replace(/\/$/, "");
   if (env) return env;
   const h = window.location.hostname;
   return h === "localhost" || h === "127.0.0.1" ? "http://localhost:5000" : "";
+}
+const REMOTE_UPLOADS = (import.meta.env?.VITE_REMOTE_UPLOADS_ORIGIN || "").replace(/\/$/, "");
+
+/* Auth header helper (JWT) */
+function getToken() {
+  return (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    sessionStorage.getItem("token") ||
+    ""
+  );
+}
+function authHeaders(extra = {}) {
+  const t = getToken();
+  return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
 }
 
 /** fetch with timeout so UI never “hangs” */
@@ -34,7 +48,7 @@ async function patchImage({ ownerId, filename, body }) {
     {
       method: "PATCH",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ accountId: ownerId, ...body }),
     }
   );
@@ -45,7 +59,7 @@ async function patchImage({ ownerId, filename, body }) {
 /** Robust delete: try id, then basename(filename), then full filename. Retry once. */
 async function deleteByKey(ownerId, key) {
   const url = `${apiBase()}/api/gallery/${encodeURIComponent(key)}?accountId=${encodeURIComponent(ownerId)}`;
-  const res = await fetchWithTimeout(url, { method: "DELETE", credentials: "include" }, 8000);
+  const res = await fetchWithTimeout(url, { method: "DELETE", credentials: "include", headers: authHeaders() }, 8000);
   if (!res.ok) {
     const t = await res.text().catch(() => "");
     throw new Error(`${res.status} ${res.statusText} ${t.slice(0,120)}`);
@@ -77,23 +91,51 @@ async function deleteImageSmart({ ownerId, image }) {
   throw new Error(lastErr || "Delete failed");
 }
 
-/* ---------------- helpers ---------------- */
-const idOf = (im) => String(im?._id || im?.id || im?.filename || "");
-const valId = (v) => String(v?._id || v?.id || v || "");
-const timeago = (d) => {
-  if (!d) return "";
-  const t = new Date(d).getTime();
-  if (Number.isNaN(t)) return "";
-  const s = Math.floor((Date.now() - t) / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  const dd = Math.floor(h / 24);
-  if (dd < 7) return `${dd}d`;
-  return new Date(t).toLocaleString();
-};
+/* ---------------- fallback image helpers ---------------- */
+const DEFAULT_IMG =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='800' height='600'>
+      <rect width='100%' height='100%' fill='#050505'/>
+      <rect x='20' y='20' width='760' height='560' rx='16' fill='#111' stroke='#2d2d2d' stroke-width='3'/>
+      <circle cx='400' cy='300' r='110' fill='#1a1a1a' stroke='#2d2d2d' stroke-width='3'/>
+    </svg>`
+  );
+
+function fixLocalAbsolute(url) {
+  try {
+    const u = new URL(url);
+    if (/localhost|127\.0\.0\.1/.test(u.hostname)) {
+      u.protocol = "http:";
+      u.hostname = "localhost";
+      if (!u.port) u.port = "5000";
+      return u.toString();
+    }
+  } catch {}
+  return url;
+}
+function normalizeUploadsPath(raw) {
+  const name = String(raw || "").replace(/^https?:\/\/.+$/i, "");
+  const withLeading = name.startsWith("/") ? name : `/${name}`;
+  const ensured = withLeading.startsWith("/uploads")
+    ? withLeading
+    : `/uploads${withLeading}`;
+  const parts = ensured.split("/");
+  const head = parts.slice(0, 2).join("/");
+  const tail = parts.slice(2).map(encodeURIComponent).join("/");
+  return tail ? `${head}/${tail}` : head;
+}
+function buildCandidatesFromImage(x, host = "") {
+  // resolve something like {path|url|src|filename}
+  const p0 = typeof x === "string" ? x : (x?.path || x?.url || x?.src || x?.filename || "");
+  if (!p0) return [];
+  if (/^https?:\/\//i.test(p0)) return [fixLocalAbsolute(p0)];
+  const p = normalizeUploadsPath(p0);
+  const out = [p, `${apiBase()}${p}`];
+  if (host) out.push(`${host}${p}`);
+  if (REMOTE_UPLOADS) out.push(`${REMOTE_UPLOADS}${p}`);
+  return out.map(fixLocalAbsolute);
+}
 function buildSrc(x, host = "") {
   if (!x) return "";
   if (typeof x === "string") return x;
@@ -120,10 +162,10 @@ export default function ImagePopupViewer({
   updateGalleryImage,
   ownerId,
   fileHost = "",
-  onAfterDelete,            // optional parent callback
+  onAfterDelete,
 }) {
   const { user } = useAuth();
-  const meId = useMemo(() => valId(user), [user]);
+  const meId = useMemo(() => String(user?._id || user?.id || ""), [user]);
 
   // Broadcast for other components/tabs
   const bcRef = useRef(null);
@@ -131,11 +173,18 @@ export default function ImagePopupViewer({
     try { if ("BroadcastChannel" in window) bcRef.current = new BroadcastChannel("nsz:gallery"); } catch {}
     return () => { try { bcRef.current?.close(); } catch {} };
   }, []);
-  const broadcast = (msg) => { try { bcRef.current?.postMessage?.(msg); } catch {} };
 
   // Optimistic hide when deleting
   const [hiddenIds, setHiddenIds] = useState([]);
-  const visible = useMemo(() => images.filter((im) => !hiddenIds.includes(idOf(im))), [images, hiddenIds]);
+  const visible = useMemo(
+    () =>
+      images.filter(
+        (im) =>
+          String(im?._id || im?.id || im?.filename || "") &&
+          !hiddenIds.includes(String(im?._id || im?.id || im?.filename || ""))
+      ),
+    [images, hiddenIds]
+  );
 
   const clamp = (n, max) => Math.max(0, Math.min(n, Math.max(0, max)));
   const [idx, setIdx] = useState(clamp(popupIndex, (visible.length || 1) - 1));
@@ -143,13 +192,18 @@ export default function ImagePopupViewer({
   const prevExists = idx > 0;
   const nextExists = idx < visible.length - 1;
 
+  // Fallback chain for the big image
+  const [srcIdx, setSrcIdx] = useState(0);
+  const srcCandidates = useMemo(() => buildCandidatesFromImage(current, fileHost), [current, fileHost]);
+  const src = srcCandidates[srcIdx] || DEFAULT_IMG;
+  useEffect(() => setSrcIdx(0), [current]);
+
   // snapshot the item being deleted so async ops don’t shift targets
   const currentRef = useRef(null);
   useEffect(() => { currentRef.current = current; }, [current]);
 
   useEffect(() => { setIdx((i) => clamp(i, visible.length - 1)); }, [visible.length]);
 
-  // avoid setState after unmount
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
@@ -161,6 +215,7 @@ export default function ImagePopupViewer({
   }, []);
 
   // deep-link ?image=<id>
+  const idOf = (im) => String(im?._id || im?.id || im?.filename || "");
   useEffect(() => {
     if (!current) return;
     const url = new URL(window.location.href);
@@ -188,7 +243,7 @@ export default function ImagePopupViewer({
     return () => window.removeEventListener("keydown", onKey);
   }, [prevExists, nextExists, visible.length]);
 
-  // preload neighbors
+  // preload neighbors (first candidate only)
   useEffect(() => {
     const preload = (i) => {
       const im = visible[i]; if (!im) return;
@@ -207,8 +262,8 @@ export default function ImagePopupViewer({
 
   const likesArr = Array.isArray(current?.likes) ? current.likes : [];
   const dislikesArr = Array.isArray(current?.dislikes) ? current.dislikes : [];
-  const iLike = meId && likesArr.map(valId).includes(meId);
-  const iDislike = meId && dislikesArr.map(valId).includes(meId);
+  const iLike = meId && likesArr.map(String).includes(meId);
+  const iDislike = meId && dislikesArr.map(String).includes(meId);
 
   const [working, setWorking] = useState(false);
   const optimisticUpdate = (next) => updateGalleryImage?.(next);
@@ -218,8 +273,8 @@ export default function ImagePopupViewer({
     setWorking(true);
     try {
       const idMe = meId;
-      const curLikes = Array.isArray(current.likes) ? current.likes.map(valId) : [];
-      const curDislikes = Array.isArray(current.dislikes) ? current.dislikes.map(valId) : [];
+      const curLikes = Array.isArray(current.likes) ? current.likes.map(String) : [];
+      const curDislikes = Array.isArray(current.dislikes) ? current.dislikes.map(String) : [];
 
       let nextLikes = [...curLikes];
       let nextDislikes = [...curDislikes];
@@ -291,19 +346,20 @@ export default function ImagePopupViewer({
 
   if (!current) { cleanUrlAndClose(); return null; }
 
-  // 🔧 Safety reset: whenever we change to a new current image, ensure deleting is false
+  // 🔧 Safety reset on image change
   const [deleting, setDeleting] = useState(false);
-  useEffect(() => { setDeleting(false); setConfirmOpen(false); }, [current && idOf(current)]); // reset latch on image change
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  useEffect(() => { setDeleting(false); setConfirmDeleteOpen(false); }, [idOf(current)]);
 
-  const src = buildSrc(current, fileHost);
   const ownerUser = current?.user || current?.owner || {};
   const ownerName = ownerUser?.username || ownerUser?.name || "User";
   const ownerAvatar = pickAvatar(ownerUser);
-  const when = timeago(current?.createdAt);
+  const when = (() => {
+    const t = new Date(current?.createdAt || 0);
+    return Number.isNaN(+t) ? "" : t.toLocaleString();
+  })();
 
-  /* ---------------- layout & styles ---------------- */
-  // Desktop/Tablet (≥1024px): grid [meta | stage]
-  // Mobile (<1024px): stack ["stage", "meta"] (image on top)
+  /* ---------------- layout & styles (unchanged) ---------------- */
   const overlay = {
     position: "fixed",
     inset: 0,
@@ -332,7 +388,6 @@ export default function ImagePopupViewer({
     gridTemplateAreas: `"meta stage"`,
     columnGap: 12,
   };
-
   const responsive = `
     @media (max-width: 1024px) {
       .iv-frame      { grid-template-columns: 1fr; grid-template-areas: "stage" "meta"; height: auto; max-height: 100vh; }
@@ -349,69 +404,15 @@ export default function ImagePopupViewer({
       .iv-countBadge { left: 8px !important; top: 8px !important; }
     }
   `;
-
-  const header = {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    height: HEADER_H,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    zIndex: 50,
-  };
-  const closeBtn = {
-    border: "1px solid #2d2d2d",
-    background: "rgba(0,0,0,.55)",
-    color: "#eee",
-    borderRadius: 10,
-    padding: "8px 12px",
-    fontWeight: 800,
-    cursor: "pointer",
-  };
-
-  // Image (grid area 'stage')
+  const header = { position: "absolute", top: 8, right: 8, height: HEADER_H, display: "flex", alignItems: "center", justifyContent: "flex-end", zIndex: 50 };
+  const closeBtn = { border: "1px solid #2d2d2d", background: "rgba(0,0,0,.55)", color: "#eee", borderRadius: 10, padding: "8px 12px", fontWeight: 800, cursor: "pointer" };
   const stageWrap = { gridArea: "stage", position: "relative", minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" };
   const stage = { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" };
   const media = { maxWidth: "100%", maxHeight: `calc(100% - ${HEADER_H}px)`, objectFit: "contain", display: "block" };
-  const navZone = (side) => ({
-    position: "absolute", top: 0, bottom: 0, [side]: 0, width: 96,
-    display: "flex", alignItems: "center", justifyContent: side === "left" ? "flex-start" : "flex-end",
-    padding: "0 10px", cursor: "pointer",
-    background: `linear-gradient(${side === "left" ? "to right" : "to left"}, rgba(0,0,0,.35), transparent)`,
-    userSelect: "none",
-  });
-  const navBtn = {
-    width: 44, height: 44, borderRadius: "9999px",
-    border: "1px solid #2d2d2d", background: "rgba(0,0,0,.55)",
-    color: "#eee", fontSize: 28, lineHeight: "42px", textAlign: "center", fontWeight: 900,
-  };
-  const countBadge = {
-    position: "absolute",
-    top: 8,
-    left: 8,
-    zIndex: 2,
-    border: "1px solid #2d2d2d",
-    background: "rgba(0,0,0,.55)",
-    color: "#ddd",
-    borderRadius: 10,
-    padding: "6px 10px",
-    fontWeight: 800,
-    pointerEvents: "none",
-  };
-
-  // Meta (grid area 'meta')
-  const side = {
-    gridArea: "meta",
-    width: "100%",
-    padding: "14px",
-    color: "#ddd",
-    overflowY: "auto",
-    overflowX: "hidden",
-    borderRight: "1px solid #262626",
-    overscrollBehavior: "contain",
-  };
-
+  const navZone = (side) => ({ position: "absolute", top: 0, bottom: 0, [side]: 0, width: 96, display: "flex", alignItems: "center", justifyContent: side === "left" ? "flex-start" : "flex-end", padding: "0 10px", cursor: "pointer", background: `linear-gradient(${side === "left" ? "to right" : "to left"}, rgba(0,0,0,.35), transparent)`, userSelect: "none" });
+  const navBtn = { width: 44, height: 44, borderRadius: "9999px", border: "1px solid #2d2d2d", background: "rgba(0,0,0,.55)", color: "#eee", fontSize: 28, lineHeight: "42px", textAlign: "center", fontWeight: 900 };
+  const countBadge = { position: "absolute", top: 8, left: 8, zIndex: 2, border: "1px solid #2d2d2d", background: "rgba(0,0,0,.55)", color: "#ddd", borderRadius: 10, padding: "6px 10px", fontWeight: 800, pointerEvents: "none" };
+  const side = { gridArea: "meta", width: "100%", padding: "14px", color: "#ddd", overflowY: "auto", overflowX: "hidden", borderRight: "1px solid #262626", overscrollBehavior: "contain" };
   const topRow = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 };
   const userWrap = { display: "flex", alignItems: "center", gap: 10, minWidth: 0 };
   const avatarStyle = { width: 36, height: 36, borderRadius: "9999px", background: "#111", border: "1px solid #2d2d2d", overflow: "hidden", display: "grid", placeItems: "center", color: "#ccc", fontWeight: 900 };
@@ -419,18 +420,15 @@ export default function ImagePopupViewer({
   const userName = { fontWeight: 900, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
   const sub = { opacity: 0.75, fontSize: 12 };
   const divider = { borderTop: "1px solid #262626", margin: "10px 0" };
-
   const iconBtn = (active) => ({ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", border: "1px solid #2d2d2d", background: "#121212", color: active ? ACCENT : "#bbb", borderRadius: 10, padding: "6px 10px", fontWeight: 800 });
   const countsRow = { display: "flex", gap: 10, alignItems: "center", marginTop: 10 };
   const captionBox = { whiteSpace: "pre-wrap", lineHeight: 1.45, overflowWrap: "anywhere", wordBreak: "break-word", marginTop: 10 };
-  const editArea = { width: "100%", minHeight: 80, resize: "vertical", background: "#0e0e0e", color: "#eee", border: "1px solid #2d2d2d", borderRadius: 10, padding: 10 };
+  const editArea = { width: "100%", minHeight: 80, resize: "vertical", background: "#0e0e0e", color: "#eee", border: "1px solid #2d2d2d", borderRadius: 10 };
   const editRow = { display: "flex", gap: 8, marginTop: 8 };
   const editBtn = { border: "1px solid #2d2d2d", background: "#1a1a1a", color: ACCENT, borderRadius: 10, padding: "8px 12px", fontWeight: 800 };
 
-  // actions menu + confirm modal
   const [menuOpen, setMenuOpen] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const menuWrapRef = useRef(null);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0, minWidth: 220 });
 
@@ -489,49 +487,38 @@ export default function ImagePopupViewer({
   }
   function openDeleteConfirm() {
     setMenuOpen(false);
-    // explicit reset in case a prior delete left a stale flag
     setDeleting(false);
-    setConfirmOpen(true);
+    setConfirmDeleteOpen(true);
   }
-  function cancelDelete() { if (!deleting) setConfirmOpen(false); }
+  function cancelDelete() { if (!deleting) setConfirmDeleteOpen(false); }
 
-  // DELETE: close dialog immediately, robust server delete, advance next/prev, notify parents
+  // DELETE: optimistic, robust
   async function confirmDelete() {
     const snapshot = currentRef.current;
     if (!snapshot || deleting) return;
     const deleteId = idOf(snapshot);
 
-    // Decide landing target before hide (based on *current* visible list)
     const nextIdx = idx < visible.length - 1 ? idx : (idx > 0 ? idx - 1 : null);
-
-    // Optimistic hide & advance
     setHiddenIds((h) => (h.includes(deleteId) ? h : [...h, deleteId]));
     if (nextIdx !== null) setIdx(nextIdx);
 
-    // Hide confirm instantly, then process
-    setConfirmOpen(false);
+    setConfirmDeleteOpen(false);
     setDeleting(true);
 
     try {
       await deleteImageSmart({ ownerId, image: snapshot });
-
-      // Notify parent + events
       onAfterDelete?.(String(deleteId));
-      broadcast({ type: "gallery:deleted", ownerId: String(ownerId), imageId: String(deleteId) });
-      try {
-        window.dispatchEvent(new CustomEvent("nsz:gallery", { detail: { type: "gallery:deleted", ownerId: String(ownerId), imageId: String(deleteId) } }));
-      } catch {}
+      try { bcRef.current?.postMessage?.({ type: "gallery:deleted", ownerId: String(ownerId), imageId: String(deleteId) }); } catch {}
+      try { window.dispatchEvent(new CustomEvent("nsz:gallery", { detail: { type: "gallery:deleted", ownerId: String(ownerId), imageId: String(deleteId) } })); } catch {}
 
       if (nextIdx === null) cleanUrlAndClose();
-    } catch (e) {
-      // Undo optimistic hide on failure
+    } catch {
       setHiddenIds((h) => h.filter((id) => id !== deleteId));
     } finally {
       if (mountedRef.current) setDeleting(false);
     }
   }
 
-  // modal styles
   const modalOverlay = { position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", zIndex: 10000 };
   const modalCard = { background: "#0b0b0b", border: "1px solid #262626", borderRadius: 12, padding: 16, width: "min(420px, 92vw)", boxShadow: "0 10px 30px rgba(0,0,0,.6)" };
   const modalBtn = { border: "1px solid #2d2d2d", background: "#111", color: "#ddd", borderRadius: 10, padding: "8px 12px", fontWeight: 800 };
@@ -547,7 +534,7 @@ export default function ImagePopupViewer({
           <button onClick={cleanUrlAndClose} style={closeBtn} aria-label="Close image">✕</button>
         </div>
 
-        {/* IMAGE (right on desktop, top on mobile) */}
+        {/* IMAGE */}
         <div className="iv-stageWrap" style={stageWrap}>
           <div className="iv-countBadge" style={countBadge}>{visible.length ? `${idx + 1} / ${visible.length}` : ""}</div>
           <div className="iv-stage" style={stage}>
@@ -556,7 +543,18 @@ export default function ImagePopupViewer({
                 <div style={navBtn}>‹</div>
               </div>
             )}
-            <img src={src} alt={current?.caption || ""} style={media} />
+            <img
+              src={src}
+              alt={current?.caption || ""}
+              style={media}
+              onError={(e) => {
+                if (srcIdx < srcCandidates.length - 1) {
+                  setSrcIdx((n) => n + 1);
+                } else if (e.currentTarget.src !== DEFAULT_IMG) {
+                  e.currentTarget.src = DEFAULT_IMG;
+                }
+              }}
+            />
             {nextExists && (
               <div className="iv-navZone" style={navZone("right")} onClick={() => setIdx((i) => Math.min(visible.length - 1, i + 1))} aria-label="Next image">
                 <div style={navBtn}>›</div>
@@ -565,7 +563,7 @@ export default function ImagePopupViewer({
           </div>
         </div>
 
-        {/* META (left on desktop, below on mobile) */}
+        {/* META */}
         <aside className="iv-meta" style={side}>
           <div style={topRow}>
             <div style={userWrap}>
@@ -575,7 +573,6 @@ export default function ImagePopupViewer({
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={userName}>{ownerName}</span>
-                  <span style={dot(online)} />
                 </div>
                 <div style={sub}>{when}</div>
               </div>
@@ -583,10 +580,9 @@ export default function ImagePopupViewer({
 
             {/* actions */}
             <div ref={menuWrapRef} style={{ position: "relative" }}>
-              <button style={actionsIconBtn} onClick={() => setMenuOpen((v) => !v)} aria-label="More actions">⋯</button>
+              <button style={{ width: 36, height: 32, display: "grid", placeItems: "center", border: "1px solid #2d2d2d", background: "#121212", color: ACCENT, borderRadius: 8, fontSize: 18, lineHeight: 1, cursor: "pointer" }} onClick={() => setMenuOpen((v) => !v)} aria-label="More actions">⋯</button>
               {menuOpen && (
                 <div style={menuPanel} role="menu" aria-label="Image actions">
-                  {/* DELETE stays visible at all times */}
                   <button style={itemDanger} onClick={openDeleteConfirm}>🗑 Delete image</button>
                   <div style={{ overflowY: "auto" }}>
                     {!editing && <button style={item} onClick={() => { setMenuOpen(false); setEditing(true); }}>✎ Edit caption</button>}
@@ -598,20 +594,20 @@ export default function ImagePopupViewer({
             </div>
           </div>
 
-          <div style={divider} />
-
-          {showInfo && (
-            <div style={{ fontSize: 13, color: "#aaa", marginBottom: 8, overflowWrap: "anywhere", wordBreak: "break-word" }}>
-              {current?.filename && <div><strong>File:</strong> {current.filename}</div>}
-              {current?.createdAt && <div><strong>Uploaded:</strong> {new Date(current.createdAt).toLocaleString()}</div>}
-            </div>
-          )}
+          <div style={{ borderTop: "1px solid #262626", margin: "10px 0" }} />
 
           {!editing ? (
-            <div style={captionBox}>{current?.caption || <span style={{ opacity: 0.6 }}>No caption</span>}</div>
+            <div style={captionBox}>
+              {current?.caption || <span style={{ opacity: 0.6 }}>No caption</span>}
+            </div>
           ) : (
             <>
-              <textarea value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Write a caption…" style={editArea} />
+              <textarea
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                placeholder="Write a caption…"
+                style={editArea}
+              />
               <div style={editRow}>
                 <button style={editBtn} onClick={saveCaption} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
                 <button style={editBtn} onClick={() => { setCaption(current?.caption || ""); setEditing(false); }} disabled={saving}>Cancel</button>
@@ -623,21 +619,28 @@ export default function ImagePopupViewer({
             <button style={iconBtn(iLike)} onClick={() => toggleReaction("like")} aria-pressed={iLike} title={iLike ? "Unlike" : "Like"}>👍 <span>{likesArr.length}</span></button>
             <button style={iconBtn(iDislike)} onClick={() => toggleReaction("dislike")} aria-pressed={iDislike} title={iDislike ? "Undo dislike" : "Dislike"}>👎 <span>{dislikesArr.length}</span></button>
           </div>
-
-          <div style={divider} />
-          <div style={{ padding: "10px 0", color: "#aaa", fontStyle: "italic" }}>💬 Comments coming soon</div>
         </aside>
       </div>
 
-      {/* Confirm delete modal (always renders when confirmOpen) */}
-      {confirmOpen && (
-        <div role="dialog" aria-modal="true" style={modalOverlay} onKeyDown={(e) => { if (e.key === "Escape" && !deleting) cancelDelete(); if (e.key === "Enter") confirmDelete(); }}>
-          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+      {/* Confirm delete modal */}
+      {confirmDeleteOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", zIndex: 10000 }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && !deleting) setConfirmDeleteOpen(false);
+            if (e.key === "Enter") confirmDelete();
+          }}
+        >
+          <div style={{ background: "#0b0b0b", border: "1px solid #262626", borderRadius: 12, padding: 16, width: "min(420px, 92vw)", boxShadow: "0 10px 30px rgba(0,0,0,.6)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontWeight: 900, color: "#fff", marginBottom: 8 }}>Delete image?</div>
             <div style={{ color: "#bbb", marginBottom: 14 }}>This action cannot be undone.</div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button style={modalBtn} onClick={cancelDelete} disabled={deleting} autoFocus>Cancel</button>
-              <button style={modalBtnDanger} onClick={confirmDelete} disabled={deleting}>{deleting ? "Deleting…" : "Delete"}</button>
+              <button style={{ border: "1px solid #2d2d2d", background: "#111", color: "#ddd", borderRadius: 10, padding: "8px 12px", fontWeight: 800 }} onClick={() => setConfirmDeleteOpen(false)} disabled={deleting} autoFocus>Cancel</button>
+              <button style={{ border: "1px solid #2d2d2d", background: "#1a1a1a", color: "#f87171", borderRadius: 10, padding: "8px 12px", fontWeight: 800, borderColor: "#3a1a1a" }} onClick={confirmDelete} disabled={deleting}>
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
             </div>
           </div>
         </div>

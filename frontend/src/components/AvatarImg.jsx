@@ -4,16 +4,41 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
  * AvatarImg
  * - Preloads the chosen URL, shows a skeleton until it's ready (no alt-text flash)
  * - Forces remount on user change (via key from caller or cacheKey)
- * - Tries multiple URL candidates (absolute > localhost:5000 > relative)
- * - Eager + async load for snappier first paint (good for profile header & search chips)
+ * - Tries multiple URL candidates (absolute > localhost:5000 > API_BASE(sanitized) > relative)
+ * - Eager + async load for snappier first paint
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+// --- NEW: base sanitizers to avoid https://api.localhost:5000 ---
+function sanitizeBase(raw) {
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    const isLoopback =
+      u.hostname === "localhost" ||
+      u.hostname === "127.0.0.1" ||
+      // subdomain like api.localhost
+      /\.?localhost$/i.test(u.hostname);
+
+    if (isLoopback) {
+      u.protocol = "http:";
+      if (!u.port) u.port = "5000";
+    }
+    // drop trailing slash
+    return u.origin.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+const API_BASE = sanitizeBase(RAW_API_BASE);
+
 const REMOTE_UPLOADS_BASE =
   import.meta.env.VITE_REMOTE_UPLOADS_BASE ||
   import.meta.env.VITE_UPLOADS_PUBLIC_BASE ||
   "";
 
+/* Build possible URLs for a given image-like field */
 function candidatesFrom(user, srcOverride) {
   const raws = [];
   if (srcOverride) raws.push(srcOverride);
@@ -47,15 +72,15 @@ function candidatesFrom(user, srcOverride) {
     s = s.replace(/\\/g, "/");
     if (!s.startsWith("/")) s = "/" + s;
 
-    // 1) explicit local backend (fast/dev)
+    // 1) explicit local backend (fast/dev) — always http://localhost:5000
     if (s.startsWith("/uploads")) out.push(`http://localhost:5000${s}`);
 
-    // 2) API_BASE (prod or proxy)
+    // 2) sanitized API_BASE (prod or proxy; never https on localhost)
     if (API_BASE && s.startsWith("/uploads")) out.push(`${API_BASE}${s}`);
 
-    // 3) optional remote uploads (prod only)
+    // 3) optional remote uploads (prod only, left as provided)
     if (REMOTE_UPLOADS_BASE && s.startsWith("/uploads"))
-      out.push(`${REMOTE_UPLOADS_BASE.replace(/\/+$/, "")}${s}`);
+      out.push(`${String(REMOTE_UPLOADS_BASE).replace(/\/+$/, "")}${s}`);
 
     // 4) raw relative (last)
     out.push(s);
@@ -72,12 +97,12 @@ export default function AvatarImg({
   user,
   src,                 // optional explicit src
   size = 72,
-  alt,                 // NOTE: alt is applied only when image is shown (to avoid text flash)
+  alt,
   className = "",
   rounded = true,
   style = {},
   title,
-  eager = true,        // eager by default (good for search/profile header)
+  eager = true,
 }) {
   const cacheKey = useMemo(
     () => String(user?._id || user?.id || user?.username || src || "fallback"),
@@ -99,21 +124,19 @@ export default function AvatarImg({
     const chosen = cached || first;
     setTargetUrl(chosen);
     idxRef.current = Math.max(0, list.indexOf(chosen));
-    setReady(Boolean(cached)); // ready immediately if cached was found
+    setReady(Boolean(cached));
   }, [cacheKey, list]);
 
   // preload the target URL; only swap <img> in once decoded
   useEffect(() => {
     if (!targetUrl || ready) return;
 
-    // create <link rel="preload"> hint
     try {
       const link = document.createElement("link");
       link.rel = "preload";
       link.as = "image";
       link.href = targetUrl;
       document.head.appendChild(link);
-      // GC later
       setTimeout(() => {
         try { document.head.removeChild(link); } catch {}
       }, 5000);
@@ -132,14 +155,12 @@ export default function AvatarImg({
     };
     img.onerror = () => {
       if (cancelled) return;
-      // try the next candidate fast
       const nextIdx = Math.min(idxRef.current + 1, list.length - 1);
       if (nextIdx !== idxRef.current) {
         idxRef.current = nextIdx;
         setTargetUrl(list[nextIdx]);
         setReady(false);
       } else {
-        // all failed → keep skeleton (no alt flash)
         setReady(false);
       }
     };
@@ -157,7 +178,6 @@ export default function AvatarImg({
     };
   }, [targetUrl, cacheKey, ready, eager, list]);
 
-  // shared box style to hold space (prevents layout shift)
   const boxStyle = {
     width: size,
     height: size,
@@ -170,12 +190,11 @@ export default function AvatarImg({
 
   return (
     <span
-      key={cacheKey} // force remount on user switch
+      key={cacheKey}
       style={boxStyle}
       className={className}
       aria-label={title || (user ? `@${user.username}` : undefined)}
     >
-      {/* Skeleton shown until final image decoded; avoids any alt-text flash */}
       {!ready && (
         <span
           style={{
@@ -200,7 +219,6 @@ export default function AvatarImg({
         }
       `}</style>
 
-      {/* Only render the actual <img> once we know it’s ready */}
       {ready && (
         <img
           src={targetUrl}

@@ -1,4 +1,4 @@
-// models/GalleryImage.js
+// backend/models/GalleryImage.js
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
@@ -31,16 +31,24 @@ const CommentSchema = new Schema(
 
 const GalleryImageSchema = new Schema(
   {
-    accountId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    filename: { type: String, required: true, unique: true },
-    path: { type: String, required: true },
-    caption: { type: String, default: '' },
-    folder: { type: String, default: 'All' },
-    likes: likeArray,
-    dislikes: likeArray,
-    comments: { type: [CommentSchema], default: [] }
+    accountId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    filename:  { type: String, required: true, unique: true },
+    path:      { type: String, required: true },
+    url:       { type: String, default: '' },     // optional absolute/served URL
+    caption:   { type: String, default: '' },
+    folder:    { type: String, default: 'All', index: true },
+    likes:     likeArray,
+    dislikes:  likeArray,
+    comments:  { type: [CommentSchema], default: [] }
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model('GalleryImage', GalleryImageSchema);
+// Helpful compound indexes for list views
+GalleryImageSchema.index({ accountId: 1, createdAt: -1 });
+GalleryImageSchema.index({ accountId: 1, folder: 1, createdAt: -1 });
+
+// IMPORTANT: guard against OverwriteModelError on hot reloads
+module.exports =
+  mongoose.models.GalleryImage ||
+  mongoose.model('GalleryImage', GalleryImageSchema);
