@@ -1,8 +1,10 @@
+// frontend/src/pages/ProfilePage.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import ImageGallery from "../components/ImageGallery";
 import AvatarImg from "../components/AvatarImg";
+import useFriendship from "../hooks/useFriendship";
 
 const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
 const API_BASE =
@@ -47,8 +49,6 @@ export default function ProfilePage() {
   const { user } = useAuth();
 
   const [profileUser, setProfileUser] = useState(null);
-  const [friendship, setFriendship] = useState("none"); // self|none|incoming|pending|friends
-  const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [confirmUnfriendOpen, setConfirmUnfriendOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -103,195 +103,50 @@ export default function ProfilePage() {
     };
   }, [routeUsername, user]);
 
-  // Load friendship status (supports userId + username in case backend expects either)
-  useEffect(() => {
-    if (isSelf) {
-      setFriendship("self");
-      return;
-    }
-    let cancelled = false;
-    async function loadStatus() {
-      if (!user || !profileUser) return;
-      try {
-        const qs = new URLSearchParams({
-          userId: String(profileUser._id || ""),
-          username: String(profileUser.username || ""),
-        });
-        const res = await fetch(`${API_BASE}/api/users/friends/status?${qs.toString()}`, {
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
-          },
-        });
-        if (!cancelled) {
-          if (res.ok) {
-            const data = await res.json().catch(() => ({}));
-            setFriendship(data?.status || "none");
-          } else if (res.status === 404) {
-            setFriendship("none");
-          } else {
-            setFriendship("none");
-          }
-        }
-      } catch {
-        if (!cancelled) setFriendship("none");
-      }
-    }
-    loadStatus();
-    return () => {
-      cancelled = true;
-    };
-  }, [isSelf, user?._id, profileUser?._id, profileUser?.username]);
+  // ---------- Real-time friendship via hook (optimistic + guarded) ----------
+  const targetId = profileUser?._id || profileUser?.id || "";
+  const targetUsername = profileUser?.username || routeUsername || "";
+
+  const {
+    status,           // 'self' | 'none' | 'pending' | 'incoming' | 'friends'
+    busy,
+    request, cancel, accept, decline, unfriend,
+    FRIEND_STATUS: FS,
+  } = useFriendship({ userId: targetId, username: targetUsername });
 
   // ---- Actions ----
   async function handleAddFriend() {
-    if (!user || !profileUser || busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/users/friends/request`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
-        },
-        body: JSON.stringify({ toUserId: profileUser._id, username: profileUser.username }),
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setFriendship(data?.status || "pending");
-        setToast("Friend request sent");
-      } else {
-        const msg = await res.text().catch(() => "");
-        setToast(`Could not send request. ${msg}`.trim());
-      }
-    } catch {
-      setToast("Network error sending request.");
-    } finally {
-      setBusy(false);
-      setTimeout(() => setToast(""), 1800);
-    }
+    const r = await request();
+    if (!r.ok) setToast("Could not send request."); else setToast("Friend request sent");
+    setTimeout(() => setToast(""), 1800);
   }
-
   async function handleCancelRequest() {
-    if (!user || !profileUser || busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/users/friends/cancel`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
-        },
-        body: JSON.stringify({ toUserId: profileUser._id, username: profileUser.username }),
-      });
-      if (res.ok) {
-        setFriendship("none");
-        setToast("Request canceled");
-      } else {
-        const msg = await res.text().catch(() => "");
-        setToast(`Could not cancel. ${msg}`.trim());
-      }
-    } catch {
-      setToast("Network error canceling request.");
-    } finally {
-      setBusy(false);
-      setTimeout(() => setToast(""), 1800);
-    }
+    const r = await cancel();
+    if (!r.ok) setToast("Could not cancel."); else setToast("");
+    setTimeout(() => setToast(""), 1800);
   }
-
   async function handleAcceptFriend() {
-    if (!user || !profileUser || busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/users/friends/accept`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
-        },
-        body: JSON.stringify({ fromUserId: profileUser._id, username: profileUser.username }),
-      });
-      if (res.ok) {
-        setFriendship("friends");
-        setToast("You are now friends");
-      } else {
-        const msg = await res.text().catch(() => "");
-        setToast(`Could not accept. ${msg}`.trim());
-      }
-    } catch {
-      setToast("Network error accepting request.");
-    } finally {
-      setBusy(false);
-      setTimeout(() => setToast(""), 1800);
-    }
+    const r = await accept();
+    if (!r.ok) setToast("Could not accept."); else setToast("You are now friends");
+    setTimeout(() => setToast(""), 1800);
   }
-
   async function handleDeclineFriend() {
-    if (!user || !profileUser || busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/users/friends/decline`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
-        },
-        body: JSON.stringify({ fromUserId: profileUser._id, username: profileUser.username }),
-      });
-      if (res.ok) {
-        setFriendship("none");
-        setToast("Request declined");
-      } else {
-        const msg = await res.text().catch(() => "");
-        setToast(`Could not decline. ${msg}`.trim());
-      }
-    } catch {
-      setToast("Network error declining request.");
-    } finally {
-      setBusy(false);
-      setTimeout(() => setToast(""), 1800);
-    }
+    const r = await decline();
+    if (!r.ok) setToast("Could not decline."); else setToast("");
+    setTimeout(() => setToast(""), 1800);
   }
-
   async function handleConfirmUnfriend() {
-    if (!user || !profileUser || busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/users/friends/unfriend`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
-        },
-        body: JSON.stringify({ userId: profileUser._id, username: profileUser.username }),
-      });
-      if (res.ok) {
-        setFriendship("none");
-        setConfirmUnfriendOpen(false);
-        setToast("Removed from friends");
-      } else {
-        const msg = await res.text().catch(() => "");
-        setToast(`Could not unfriend. ${msg}`.trim());
-      }
-    } catch {
-      setToast("Network error trying to unfriend.");
-    } finally {
-      setBusy(false);
-      setTimeout(() => setToast(""), 1800);
-    }
+    const r = await unfriend();
+    if (!r.ok) setToast("Could not unfriend."); else setToast("Removed from friends");
+    setConfirmUnfriendOpen(false);
+    setTimeout(() => setToast(""), 1800);
   }
 
   // Button visibility
-  const showAddBtn = !isSelf && friendship === "none";
-  const showRequested = !isSelf && friendship === "pending";
-  const showIncoming = !isSelf && friendship === "incoming";
-  const showUnfriend = !isSelf && friendship === "friends";
+  const showAddBtn = !(status === FS.SELF) && status === FS.NONE;
+  const showRequested = !(status === FS.SELF) && status === FS.PENDING;
+  const showIncoming = !(status === FS.SELF) && status === FS.INCOMING;
+  const showUnfriend = !(status === FS.SELF) && status === FS.FRIENDS;
 
   return (
     <div className="profile-page" style={{ position: "relative" }} key={routeUsername || user?.username}>
@@ -330,8 +185,6 @@ export default function ProfilePage() {
           .pp-main{ flex-direction:column; }
         }
         .section{ margin-bottom:2rem; padding:1rem; border-radius:8px; border:1px solid #333; background:rgba(17,17,17,.5); }
-        .pp-friends{ display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; }
-        @media (max-width: 480px){ .pp-friends{ grid-template-columns:repeat(2,1fr); } }
         .pp-btn{ border:none; padding:.45rem .85rem; border-radius:6px; cursor:pointer; font-weight:700; }
         .pp-btn.gold{ background:#ffe259; color:#000; }
         .pp-btn.action{ border:1px solid #333; background:rgba(255,226,89,.2); color:#ffe259; }
@@ -340,7 +193,7 @@ export default function ProfilePage() {
         .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; z-index:50; }
         .modal{ background:#111; border:1px solid #444; border-radius:10px; padding:1rem; width:min(420px,92vw); box-shadow:0 0 18px rgba(255,226,89,.15); }
         .modal-actions{ display:flex; gap:.5rem; justify-content:flex-end; }
-        .pp-toast{ font-size:12px; color:#bbb; min-height:18px; }
+        .pp-toast{ font-size:12px; color:#bbb; min-height:18px; margin-left:.25rem; }
       `}</style>
 
       <div className="pp-container">
@@ -395,12 +248,10 @@ export default function ProfilePage() {
           </div>
 
           <div className="pp-center">
-            {/* Avatar now uses a skeleton → swaps in only after decoded (no 'avatar' text flash) */}
             <AvatarImg
               user={profileUser || undefined}
               size={120}
               eager
-              className=""
               style={{ margin: "0 auto .5rem" }}
               rounded
             />
@@ -422,7 +273,14 @@ export default function ProfilePage() {
         <div className="pp-main">
           <div className="pp-col-left">
             <div className="section">
-              <textarea className="pp-input" placeholder="What's on your mind?" />
+              <textarea
+                className="pp-input"
+                placeholder="What's on your mind?"
+                style={{
+                  width:"100%", padding:".5rem", borderRadius:6,
+                  background:"transparent", border:"1px solid #333", color:"#ffe259",
+                }}
+              />
               <button className="pp-btn gold" style={{ marginTop: ".5rem" }}>
                 Post
               </button>
@@ -441,7 +299,7 @@ export default function ProfilePage() {
           <div className="pp-col-right">
             <div className="section">
               <h2>Friends</h2>
-              {/* ... right column content ... */}
+              {/* ... any sidebar content ... */}
             </div>
           </div>
         </div>

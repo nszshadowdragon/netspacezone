@@ -91,6 +91,26 @@ function toPublicUrl(req, raw) {
   return `https://api.netspacezone.com${p}`;
 }
 
+/* ---------------- cookie options (prod-ready cross-site) --------------- */
+const IS_PROD = process.env.NODE_ENV === "production";
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || ".netspacezone.com";
+const BASE_COOKIE = {
+  httpOnly: true,
+  path: "/",
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+};
+function cookieOpts() {
+  if (!IS_PROD) {
+    return { ...BASE_COOKIE, sameSite: "lax", secure: false };
+  }
+  return {
+    ...BASE_COOKIE,
+    sameSite: "none",   // allow app → api cross-site
+    secure: true,
+    domain: COOKIE_DOMAIN,
+  };
+}
+
 /* --------------------------------- MULTER --------------------------------- */
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -143,13 +163,10 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
     const token = signJwt({ id: user._id });
 
     res
-      .cookie("token", token, {
-        httpOnly: true, sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      })
+      .cookie("token", token, cookieOpts())
       .status(201)
       .json({
+        token, // ✅ return token so frontend can set Authorization as fallback
         user: {
           id: user._id,
           username: user.username,
@@ -158,7 +175,7 @@ router.post("/signup", upload.single("profilePic"), async (req, res) => {
           lastName: user.lastName,
           birthday: user.birthday,
           profilePic: user.profilePic,
-          profileImageUrl: toPublicUrl(req, user.profilePic), // NEW
+          profileImageUrl: toPublicUrl(req, user.profilePic),
           referral: user.referral || "",
           interests: user.interests || [],
         },
@@ -187,12 +204,9 @@ router.post("/login", async (req, res) => {
     const token = signJwt({ id: user._id });
 
     res
-      .cookie("token", token, {
-        httpOnly: true, sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      })
+      .cookie("token", token, cookieOpts())
       .json({
+        token, // ✅ return token so frontend can send Authorization header
         user: {
           id: user._id,
           username: user.username,
@@ -201,7 +215,7 @@ router.post("/login", async (req, res) => {
           lastName: user.lastName,
           birthday: user.birthday,
           profilePic: user.profilePic,
-          profileImageUrl: toPublicUrl(req, user.profilePic), // NEW
+          profileImageUrl: toPublicUrl(req, user.profilePic),
           referral: user.referral || "",
           interests: user.interests || [],
         },
@@ -227,7 +241,7 @@ router.get("/me", verifyToken, async (req, res) => {
         lastName: me.lastName,
         birthday: me.birthday,
         profilePic: me.profilePic,
-        profileImageUrl: toPublicUrl(req, me.profilePic), // NEW
+        profileImageUrl: toPublicUrl(req, me.profilePic),
         referral: me.referral || "",
         interests: me.interests || [],
       },
@@ -243,11 +257,8 @@ router.get("/me", verifyToken, async (req, res) => {
 
 // POST /api/auth/logout
 router.post("/logout", (req, res) => {
-  res.clearCookie("token", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-  });
+  // clear cookie with the same attrs we set (domain/samesite/secure/path)
+  res.clearCookie("token", cookieOpts());
   res.json({ ok: true });
 });
 
@@ -333,7 +344,7 @@ router.patch("/profile", verifyToken, upload.single("profilePic"), async (req, r
         lastName: user.lastName,
         birthday: user.birthday,
         profilePic: user.profilePic,
-        profileImageUrl: toPublicUrl(req, user.profilePic), // NEW
+        profileImageUrl: toPublicUrl(req, user.profilePic),
         referral: user.referral || "",
         interests: user.interests || [],
       },
