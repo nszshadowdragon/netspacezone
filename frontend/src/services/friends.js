@@ -1,17 +1,32 @@
 // frontend/src/services/friends.js
+/**
+ * Friend API helper — single source of truth for all friend actions.
+ * Endpoints expected:
+ *  GET  /api/users/friends/status?userId=&username=
+ *  POST /api/users/friends/request   { toUserId?, username? }
+ *  POST /api/users/friends/cancel    { toUserId?, username? }
+ *  POST /api/users/friends/accept    { fromUserId?, username? }
+ *  POST /api/users/friends/decline   { fromUserId?, username? }
+ *  POST /api/users/friends/unfriend  { userId?, username? }
+ *  GET  /api/users/friends/counts
+ *  GET  /api/users/friends/incoming
+ *  GET  /api/users/friends/outgoing
+ *  GET  /api/users/friends/list
+ */
+
 const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
 const API_BASE =
   (import.meta?.env?.VITE_API_BASE_URL ||
     import.meta?.env?.VITE_API_BASE ||
     (isLocal ? "http://localhost:5000" : ""))?.replace?.(/\/$/, "") || "";
 
-export const FRIEND_STATUS = {
+export const FRIEND_STATUS = /** @type {const} */ ({
   SELF: "self",
   NONE: "none",
   PENDING: "pending",   // you sent a request
   INCOMING: "incoming", // they sent you a request
   FRIENDS: "friends",
-};
+});
 
 function getToken() {
   return (
@@ -20,12 +35,6 @@ function getToken() {
     sessionStorage.getItem("token") ||
     ""
   );
-}
-function authHeaders(extra = {}) {
-  const token = getToken();
-  const h = { ...(extra || {}) };
-  if (token) h.Authorization = `Bearer ${token}`;
-  return h;
 }
 
 /* ---------- token bridge: recover JWT from httpOnly cookie on 401 ---------- */
@@ -45,6 +54,12 @@ async function primeAuthFromCookie() {
   }
 }
 
+/**
+ * requestJSON
+ * - For GET: do NOT send custom headers (Authorization, Content-Type) → avoid CORS preflight; use cookies.
+ * - On 401, prime token via token-bridge and retry ONCE with Authorization header.
+ * - For mutating requests (POST/etc): keep JSON + Authorization.
+ */
 async function requestJSON(path, { method = "GET", headers, body, qs } = {}, _retried = false) {
   const url = new URL(`${API_BASE}${path}`);
   if (qs && typeof qs === "object") {
@@ -55,13 +70,23 @@ async function requestJSON(path, { method = "GET", headers, body, qs } = {}, _re
     });
   }
 
+  const isGet = String(method || "GET").toUpperCase() === "GET";
+  const token = getToken();
+
+  // Build headers conservatively
+  const baseHeaders = {};
+  if (!isGet) {
+    // Mutating requests: keep JSON and Authorization
+    if (!(body instanceof FormData)) baseHeaders["Content-Type"] = "application/json";
+    if (token) baseHeaders["Authorization"] = `Bearer ${token}`;
+  }
+  // Merge any explicit headers the caller passed (rare)
+  Object.assign(baseHeaders, headers || {});
+
   const res = await fetch(url.toString(), {
     method,
     credentials: "include",
-    headers: authHeaders({
-      "Content-Type": body instanceof FormData ? undefined : "application/json",
-      ...headers,
-    }),
+    headers: baseHeaders, // GET has no custom headers → cookie-only auth (no preflight)
     body: body
       ? body instanceof FormData
         ? body
@@ -69,11 +94,15 @@ async function requestJSON(path, { method = "GET", headers, body, qs } = {}, _re
       : undefined,
   });
 
-  // If unauthorized, try token-bridge once and retry the call
-  if (res.status === 401 && !_retried) {
+  // If a GET still hits 401, try token-bridge then retry once WITH Authorization
+  if (isGet && res.status === 401 && !_retried) {
     const ok = await primeAuthFromCookie();
     if (ok) {
-      return requestJSON(path, { method, headers, body, qs }, true);
+      // retry GET with Authorization header this time
+      const retryHeaders = { ...(headers || {}) };
+      const t2 = getToken();
+      if (t2) retryHeaders["Authorization"] = `Bearer ${t2}`;
+      return requestJSON(path, { method, headers: retryHeaders, body, qs }, true);
     }
   }
 
@@ -94,6 +123,7 @@ function normalizeStatus(value) {
 }
 
 /** ---------- Public API ---------- */
+
 export async function getStatus({ userId, username }) {
   const { ok, status, data, raw } = await requestJSON(
     "/api/users/friends/status",
