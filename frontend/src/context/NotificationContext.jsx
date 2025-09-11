@@ -1,50 +1,10 @@
 // src/context/NotificationContext.jsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import socket from "../socket";
+import api from "../api";
 import { useAuth } from "./AuthContext";
 import FriendsAPI from "../services/friends";
 
-/* ---------- Resolve API base (no localhost fallback in prod) ---------- */
-const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
-const API_BASE =
-  (import.meta?.env?.VITE_API_BASE_URL ||
-    import.meta?.env?.VITE_API_BASE ||
-    (isLocal ? "http://localhost:5000" : ""))?.replace?.(/\/$/, "") || "";
-
-/* ---------- Helpers ---------- */
-function getToken() {
-  return (
-    localStorage.getItem("token") ||
-    localStorage.getItem("authToken") ||
-    sessionStorage.getItem("token") ||
-    ""
-  );
-}
-function authHeaders(extra = {}) {
-  const t = getToken();
-  return { ...(extra || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) };
-}
-async function fetchJSON(path, { method = "GET", headers, body } = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    credentials: "include",
-    headers: {
-      "Content-Type": body instanceof FormData ? undefined : "application/json",
-      ...authHeaders(headers),
-    },
-    body: body
-      ? body instanceof FormData
-        ? body
-        : JSON.stringify(body)
-      : undefined,
-  });
-  const text = await res.text().catch(() => "");
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch {}
-  return { ok: res.ok, status: res.status, data, text };
-}
-
-/* ---------- React context ---------- */
 const NotificationContext = createContext();
 
 export const NotificationProvider = ({ children }) => {
@@ -86,7 +46,7 @@ export const NotificationProvider = ({ children }) => {
     });
   };
 
-  /* ---------- Local cache to survive page refresh ---------- */
+  // local cache so refresh can show pending requests even if /notifications is down
   const STORE_KEY = myId ? `nsz:notif:friendreq:${myId}` : "";
   const readCache = () => {
     if (!STORE_KEY) return [];
@@ -106,7 +66,6 @@ export const NotificationProvider = ({ children }) => {
     writeCache(next);
   };
 
-  /* ---------- Always backfill from Friends (works even if /notifications 404) ---------- */
   async function backfillFromFriends() {
     try {
       const inc = await FriendsAPI.listIncoming();
@@ -132,13 +91,12 @@ export const NotificationProvider = ({ children }) => {
     } catch {/* ignore */}
   }
 
-  /* ---------- Fetch and merge ---------- */
   const fetchNotifications = async () => {
-    // Always merge cache first (so refresh shows something)
+    // show cached friend requests immediately
     readCache().forEach(addOne);
 
-    // Then try REST store
-    const r = await fetchJSON("/api/notifications", { method: "GET" });
+    // then try REST store
+    const r = await api.get("/api/notifications");
     if (r.ok && Array.isArray(r.data?.items)) {
       setNotifications((prev) => {
         const merged = dedupe([...r.data.items, ...prev]).sort(
@@ -148,16 +106,13 @@ export const NotificationProvider = ({ children }) => {
         return merged;
       });
     } else {
-      // Any failure → rely on friends backfill
       // eslint-disable-next-line no-console
       console.warn("Notifications fetch error; using friends backfill.", r.status);
     }
 
-    // Always backfill incoming requests from Friends
     await backfillFromFriends();
   };
 
-  /* ---------- Join per-user socket room ---------- */
   useEffect(() => {
     if (!myId || loading) return;
     try { socket.connect?.(); } catch {}
@@ -165,11 +120,10 @@ export const NotificationProvider = ({ children }) => {
     return () => { try { socket.emit("presence:leave"); } catch {} };
   }, [myId, loading]);
 
-  /* ---------- Sockets + synth + cache ---------- */
   useEffect(() => {
     if (!user || loading) return;
 
-    // hydrate on first mount (merge cache + rest + backfill)
+    // hydrate (cache + /notifications + friends backfill)
     fetchNotifications();
 
     const acceptIfMine = (raw) => {
@@ -199,7 +153,7 @@ export const NotificationProvider = ({ children }) => {
       const other =
         String(a) === myId ? String(b) : String(b) === myId ? String(a) : "";
       if (!other) return;
-      cacheRemoveByActor(other); // remove cached request so it doesn’t re-appear
+      cacheRemoveByActor(other);
     };
 
     socket.on("notification:new", acceptIfMine);
@@ -217,9 +171,8 @@ export const NotificationProvider = ({ children }) => {
     };
   }, [user, loading, myId]);
 
-  /* ---------- Actions (tolerate missing REST) ---------- */
   const markOneRead = async (id) => {
-    try { await fetchJSON(`/api/notifications/${id}/read`, { method: "PATCH" }); } catch {}
+    try { await api.patch(`/api/notifications/${id}/read`); } catch {}
     setNotifications((prev) => {
       const next = prev.map((n) => (n._id === id ? { ...n, read: true } : n));
       recomputeUnread(next);
@@ -228,7 +181,7 @@ export const NotificationProvider = ({ children }) => {
   };
 
   const markAllRead = async () => {
-    try { await fetchJSON("/api/notifications/read-all", { method: "POST" }); } catch {}
+    try { await api.post("/api/notifications/read-all"); } catch {}
     setNotifications((prev) => {
       const next = prev.map((n) => ({ ...n, read: true }));
       recomputeUnread(next);
@@ -237,7 +190,7 @@ export const NotificationProvider = ({ children }) => {
   };
 
   const clearOne = async (id) => {
-    try { await fetchJSON(`/api/notifications/${id}`, { method: "DELETE" }); } catch {}
+    try { await api.del(`/api/notifications/${id}`); } catch {}
     setNotifications((prev) => {
       const target = prev.find((n) => n._id === id);
       if (target?.type === "friend_request") {
@@ -251,10 +204,9 @@ export const NotificationProvider = ({ children }) => {
   };
 
   const clearAll = async () => {
-    try { await fetchJSON("/api/notifications", { method: "DELETE" }); } catch {}
+    try { await api.del("/api/notifications"); } catch {}
     setNotifications([]);
     setUnreadCount(0);
-    // don't wipe cached friend requests; they reflect real pending requests
   };
 
   const value = useMemo(
