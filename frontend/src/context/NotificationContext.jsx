@@ -46,7 +46,7 @@ export const NotificationProvider = ({ children }) => {
     });
   };
 
-  // local cache so refresh can show pending requests even if /notifications is down
+  /* ---------- Local cache to survive refresh ---------- */
   const STORE_KEY = myId ? `nsz:notif:friendreq:${myId}` : "";
   const readCache = () => {
     if (!STORE_KEY) return [];
@@ -66,36 +66,82 @@ export const NotificationProvider = ({ children }) => {
     writeCache(next);
   };
 
+  /* ---------- Normalize various incoming row shapes ---------- */
+  function resolveActorIdFromIncoming(row) {
+    // Common fields across different backends
+    const direct =
+      row.fromUserId || row.requestedBy || row.senderId || row.sender || row.from ||
+      row.userId || row.by || row.a || row.userA || row.user || row.actorId;
+
+    if (direct) return String(direct);
+
+    // Nested user objects
+    const nested =
+      (row.fromUser && (row.fromUser._id || row.fromUser.id)) ||
+      (row.user && (row.user._id || row.user.id)) ||
+      (row.actor && (row.actor._id || row.actor.id));
+
+    if (nested) return String(nested);
+
+    // Fallback: pairKey like "minId:maxId" — pick the one that's not me
+    if (row.pairKey && typeof row.pairKey === "string" && row.pairKey.includes(":")) {
+      const [a, b] = row.pairKey.split(":");
+      if (String(a) === myId) return String(b);
+      if (String(b) === myId) return String(a);
+      // no match → pick the second as a last resort
+      return String(b || a || "");
+    }
+
+    return "";
+  }
+
+  function buildFriendRequestNotif(row) {
+    const actorId = resolveActorIdFromIncoming(row);
+    if (!actorId) return null;
+
+    const actorObj =
+      row.fromUser || row.user || row.actor || null;
+
+    const username =
+      (actorObj && (actorObj.username || actorObj.userName)) || row.fromUsername || row.username || "";
+
+    const profileImage =
+      (actorObj && (actorObj.profileImage || actorObj.profilePic)) || row.profileImage || "";
+
+    return {
+      _id: `frq:${actorId}:${row.id || row._id || Date.now()}`,
+      type: "friend_request",
+      actor: { _id: String(actorId), username, profileImage },
+      message: " sent you a friend request",
+      link: username ? `/profile/${username}` : "",
+      createdAt: row.createdAt || new Date().toISOString(),
+      read: false,
+    };
+  }
+
+  /* ---------- Always backfill from Friends (even if /notifications 404) ---------- */
   async function backfillFromFriends() {
     try {
       const inc = await FriendsAPI.listIncoming();
-      if (inc.ok) {
-        (inc.data || []).forEach((r) => {
-          const item = {
-            _id: `frq:${r.fromUserId}:${r.id || Date.now()}`,
-            type: "friend_request",
-            actor: {
-              _id: String(r.fromUserId || ""),
-              username: r.fromUser?.username || "",
-              profileImage: r.fromUser?.profileImage || r.fromUser?.profilePic || "",
-            },
-            message: " sent you a friend request",
-            link: r.fromUser?.username ? `/profile/${r.fromUser.username}` : "",
-            createdAt: r.createdAt || new Date().toISOString(),
-            read: false,
-          };
-          addOne(item);
-          cacheAdd(item);
-        });
-      }
+      const rows = inc.ok
+        ? Array.isArray(inc.data)
+          ? inc.data
+          : inc.data?.results || inc.data?.items || []
+        : [];
+
+      rows.forEach((r) => {
+        const n = buildFriendRequestNotif(r);
+        if (n) { addOne(n); cacheAdd(n); }
+      });
     } catch {/* ignore */}
   }
 
+  /* ---------- Fetch and merge ---------- */
   const fetchNotifications = async () => {
-    // show cached friend requests immediately
+    // Merge cached friend requests immediately
     readCache().forEach(addOne);
 
-    // then try REST store
+    // Try REST store (fine if 404)
     const r = await api.get("/api/notifications");
     if (r.ok && Array.isArray(r.data?.items)) {
       setNotifications((prev) => {
@@ -110,9 +156,11 @@ export const NotificationProvider = ({ children }) => {
       console.warn("Notifications fetch error; using friends backfill.", r.status);
     }
 
+    // Always backfill incoming requests from Friends
     await backfillFromFriends();
   };
 
+  /* ---------- Join per-user socket room ---------- */
   useEffect(() => {
     if (!myId || loading) return;
     try { socket.connect?.(); } catch {}
@@ -120,13 +168,14 @@ export const NotificationProvider = ({ children }) => {
     return () => { try { socket.emit("presence:leave"); } catch {} };
   }, [myId, loading]);
 
+  /* ---------- Sockets + synth + cache (tolerant to payloads) ---------- */
   useEffect(() => {
     if (!user || loading) return;
 
     // hydrate (cache + /notifications + friends backfill)
     fetchNotifications();
 
-    const acceptIfMine = (raw) => {
+    const onNotification = (raw) => {
       const n = raw?.payload ? raw.payload : raw;
       if (raw?.toUserId && String(raw.toUserId) !== myId) return;
       if (!n) return;
@@ -134,43 +183,50 @@ export const NotificationProvider = ({ children }) => {
       if (n.type === "friend_request") cacheAdd(n);
     };
 
-    const onFriendRequest = ({ fromUserId, toUserId }) => {
-      if (String(toUserId) !== myId) return;
-      const item = {
-        _id: `frq:${fromUserId}:${Date.now()}`,
-        type: "friend_request",
-        actor: { _id: String(fromUserId) },
-        message: " sent you a friend request",
-        link: "",
+    const onFriendRequestCreated = (payload = {}) => {
+      // payload might be { fromUserId, toUserId } or more legacy fields
+      // Only consider if it's addressed to me
+      const toId = String(
+        payload.toUserId || payload.requestedTo || payload.to || payload.b || payload.userB || ""
+      );
+      if (toId && toId !== myId) return;
+
+      // Build a synthetic notif using whatever we have
+      const r = {
+        fromUserId:
+          payload.fromUserId || payload.requestedBy || payload.from || payload.a || payload.userA || "",
+        fromUser: payload.fromUser || payload.user || null,
         createdAt: new Date().toISOString(),
-        read: false,
+        pairKey: payload.pairKey,
       };
-      addOne(item);
-      cacheAdd(item);
+      const n = buildFriendRequestNotif(r);
+      if (n) { addOne(n); cacheAdd(n); }
     };
 
-    const onFriendAccept = ({ a, b }) => {
-      const other =
-        String(a) === myId ? String(b) : String(b) === myId ? String(a) : "";
-      if (!other) return;
-      cacheRemoveByActor(other);
+    const onFriendAccepted = (payload = {}) => {
+      // Remove cached request so it won't reappear on refresh
+      const a = String(payload.a || payload.userA || payload.fromUserId || "");
+      const b = String(payload.b || payload.userB || payload.toUserId || "");
+      const other = a === myId ? b : b === myId ? a : "";
+      if (other) cacheRemoveByActor(other);
     };
 
-    socket.on("notification:new", acceptIfMine);
-    socket.on("notification:update", acceptIfMine);
-    socket.on("notification:remove", acceptIfMine);
-    socket.on("friend:request:created", onFriendRequest);
-    socket.on("friend:accepted", onFriendAccept);
+    socket.on("notification:new", onNotification);
+    socket.on("notification:update", onNotification);
+    socket.on("notification:remove", onNotification);
+    socket.on("friend:request:created", onFriendRequestCreated);
+    socket.on("friend:accepted", onFriendAccepted);
 
     return () => {
-      socket.off("notification:new", acceptIfMine);
-      socket.off("notification:update", acceptIfMine);
-      socket.off("notification:remove", acceptIfMine);
-      socket.off("friend:request:created", onFriendRequest);
-      socket.off("friend:accepted", onFriendAccept);
+      socket.off("notification:new", onNotification);
+      socket.off("notification:update", onNotification);
+      socket.off("notification:remove", onNotification);
+      socket.off("friend:request:created", onFriendRequestCreated);
+      socket.off("friend:accepted", onFriendAccepted);
     };
   }, [user, loading, myId]);
 
+  /* ---------- Actions (tolerate missing REST) ---------- */
   const markOneRead = async (id) => {
     try { await api.patch(`/api/notifications/${id}/read`); } catch {}
     setNotifications((prev) => {
@@ -207,6 +263,7 @@ export const NotificationProvider = ({ children }) => {
     try { await api.del("/api/notifications"); } catch {}
     setNotifications([]);
     setUnreadCount(0);
+    // keep cached incoming; they reflect real pending requests
   };
 
   const value = useMemo(
