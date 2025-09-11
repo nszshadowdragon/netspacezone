@@ -1,32 +1,17 @@
 // frontend/src/services/friends.js
-/**
- * Friend API helper — single source of truth for all friend actions.
- * Endpoints expected:
- *  GET  /api/users/friends/status?userId=&username=
- *  POST /api/users/friends/request   { toUserId?, username? }
- *  POST /api/users/friends/cancel    { toUserId?, username? }
- *  POST /api/users/friends/accept    { fromUserId?, username? }
- *  POST /api/users/friends/decline   { fromUserId?, username? }
- *  POST /api/users/friends/unfriend  { userId?, username? }
- *  GET  /api/users/friends/counts
- *  GET  /api/users/friends/incoming
- *  GET  /api/users/friends/outgoing
- *  GET  /api/users/friends/list
- */
-
 const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
 const API_BASE =
   (import.meta?.env?.VITE_API_BASE_URL ||
     import.meta?.env?.VITE_API_BASE ||
     (isLocal ? "http://localhost:5000" : ""))?.replace?.(/\/$/, "") || "";
 
-export const FRIEND_STATUS = /** @type {const} */ ({
+export const FRIEND_STATUS = {
   SELF: "self",
   NONE: "none",
   PENDING: "pending",   // you sent a request
   INCOMING: "incoming", // they sent you a request
   FRIENDS: "friends",
-});
+};
 
 function getToken() {
   return (
@@ -36,7 +21,6 @@ function getToken() {
     ""
   );
 }
-
 function authHeaders(extra = {}) {
   const token = getToken();
   const h = { ...(extra || {}) };
@@ -95,18 +79,9 @@ async function requestJSON(path, { method = "GET", headers, body, qs } = {}, _re
 
   const text = await res.text().catch(() => "");
   let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
+  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
 
-  return {
-    ok: res.ok,
-    status: res.status,
-    data,
-    raw: text,
-  };
+  return { ok: res.ok, status: res.status, data, raw: text };
 }
 
 function normalizeStatus(value) {
@@ -119,8 +94,6 @@ function normalizeStatus(value) {
 }
 
 /** ---------- Public API ---------- */
-
-/** Get friendship status with a user */
 export async function getStatus({ userId, username }) {
   const { ok, status, data, raw } = await requestJSON(
     "/api/users/friends/status",
@@ -130,7 +103,6 @@ export async function getStatus({ userId, username }) {
   return { ok, status, statusText: normalizeStatus(data?.status), data };
 }
 
-/** Send a friend request */
 export async function requestFriend({ toUserId, username }) {
   const { ok, status, data, raw } = await requestJSON(
     "/api/users/friends/request",
@@ -139,7 +111,6 @@ export async function requestFriend({ toUserId, username }) {
   return { ok, status, statusText: normalizeStatus(data?.status || "pending"), data, error: ok ? null : raw };
 }
 
-/** Cancel an outgoing friend request */
 export async function cancelRequest({ toUserId, username }) {
   const { ok, status, data, raw } = await requestJSON(
     "/api/users/friends/cancel",
@@ -148,7 +119,6 @@ export async function cancelRequest({ toUserId, username }) {
   return { ok, status, statusText: normalizeStatus(data?.status || "none"), data, error: ok ? null : raw };
 }
 
-/** Accept an incoming friend request */
 export async function acceptRequest({ fromUserId, username }) {
   const { ok, status, data, raw } = await requestJSON(
     "/api/users/friends/accept",
@@ -157,7 +127,6 @@ export async function acceptRequest({ fromUserId, username }) {
   return { ok, status, statusText: normalizeStatus(data?.status || "friends"), data, error: ok ? null : raw };
 }
 
-/** Decline an incoming friend request */
 export async function declineRequest({ fromUserId, username }) {
   const { ok, status, data, raw } = await requestJSON(
     "/api/users/friends/decline",
@@ -166,7 +135,6 @@ export async function declineRequest({ fromUserId, username }) {
   return { ok, status, statusText: normalizeStatus(data?.status || "none"), data, error: ok ? null : raw };
 }
 
-/** Remove an existing friend */
 export async function unfriend({ userId, username }) {
   const { ok, status, data, raw } = await requestJSON(
     "/api/users/friends/unfriend",
@@ -175,7 +143,6 @@ export async function unfriend({ userId, username }) {
   return { ok, status, statusText: normalizeStatus(data?.status || "none"), data, error: ok ? null : raw };
 }
 
-/** Counts for badges (incoming/outgoing/friends) */
 export async function getCounts() {
   const { ok, status, data, raw } = await requestJSON("/api/users/friends/counts");
   if (!ok) return { ok, status, data: { incoming: 0, outgoing: 0, friends: 0 }, error: raw || "Failed" };
@@ -185,7 +152,6 @@ export async function getCounts() {
   return { ok, status, data: { incoming, outgoing, friends } };
 }
 
-/** Lists — shapes depend on your backend; we just pass through data arrays */
 export async function listIncoming() {
   const { ok, status, data, raw } = await requestJSON("/api/users/friends/incoming");
   return { ok, status, data: Array.isArray(data) ? data : data?.results || [], error: ok ? null : raw };
