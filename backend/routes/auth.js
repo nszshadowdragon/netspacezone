@@ -226,6 +226,35 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// 🔹 GET /api/auth/token-bridge — surface JWT from httpOnly cookie for SPA Authorization
+router.get("/token-bridge", (req, res) => {
+  try {
+    const raw =
+      req.cookies?.token || req.cookies?.jwt || req.cookies?.authToken || "";
+    if (!raw) return res.status(401).send("No auth cookie");
+
+    const secrets = [
+      process.env.JWT_SECRET,
+      process.env.JWT_KEY,
+      process.env.TOKEN_SECRET,
+    ].filter(Boolean);
+
+    let dec = null;
+    for (const sec of secrets) {
+      try { dec = jwt.verify(raw, sec); break; } catch (_) {}
+    }
+    if (!dec) return res.status(401).send("Invalid token");
+
+    return res.json({
+      token: raw,
+      user: { id: String(dec?.id || dec?._id || dec?.userId || ""), username: dec?.username || "" },
+    });
+  } catch (e) {
+    console.error("token-bridge error", e?.message || e);
+    return res.status(500).send("Failed");
+  }
+});
+
 // GET /api/auth/me
 router.get("/me", verifyToken, async (req, res) => {
   try {

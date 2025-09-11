@@ -44,7 +44,24 @@ function authHeaders(extra = {}) {
   return h;
 }
 
-async function requestJSON(path, { method = "GET", headers, body, qs } = {}) {
+/* ---------- token bridge: recover JWT from httpOnly cookie on 401 ---------- */
+async function primeAuthFromCookie() {
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/token-bridge`, {
+      method: "GET",
+      credentials: "include",
+    });
+    if (!r.ok) return false;
+    const j = await r.json().catch(() => null);
+    if (!j?.token) return false;
+    try { localStorage.setItem("token", j.token); } catch {}
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function requestJSON(path, { method = "GET", headers, body, qs } = {}, _retried = false) {
   const url = new URL(`${API_BASE}${path}`);
   if (qs && typeof qs === "object") {
     Object.entries(qs).forEach(([k, v]) => {
@@ -67,6 +84,14 @@ async function requestJSON(path, { method = "GET", headers, body, qs } = {}) {
         : JSON.stringify(body)
       : undefined,
   });
+
+  // If unauthorized, try token-bridge once and retry the call
+  if (res.status === 401 && !_retried) {
+    const ok = await primeAuthFromCookie();
+    if (ok) {
+      return requestJSON(path, { method, headers, body, qs }, true);
+    }
+  }
 
   const text = await res.text().catch(() => "");
   let data = null;
