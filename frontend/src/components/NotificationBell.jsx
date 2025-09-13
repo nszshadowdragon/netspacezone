@@ -14,9 +14,12 @@ function timeAgo(d) {
     const date = typeof d === "string" ? new Date(d) : d;
     const s = Math.floor((Date.now() - date.getTime()) / 1000);
     if (s < 60) return `${s}s ago`;
-    const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
-    const days = Math.floor(h / 24); if (days < 7) return `${days}d ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const days = Math.floor(h / 24);
+    if (days < 7) return `${days}d ago`;
     return date.toLocaleString();
   } catch { return ""; }
 }
@@ -38,12 +41,15 @@ function useOutsideClose(open, onClose) {
     function onKey(e) { if (e.key === "Escape") onClose?.(); }
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open, onClose]);
   return ref;
 }
 
-/* ---------- Requests lists (Requests tab) ---------- */
+/* ---------- request lists (Requests tab) ---------- */
 function useRequestLists(open, tab) {
   const [incoming, setIncoming] = useState([]);
   const [outgoing, setOutgoing] = useState([]);
@@ -52,24 +58,31 @@ function useRequestLists(open, tab) {
 
   const reload = useCallback(async () => {
     if (!open) return;
-    setLoading(true); setErr("");
+    setLoading(true);
+    setErr("");
     try {
       if (tab === "incoming") {
         const { ok, data, error } = await FriendsAPI.listIncoming();
-        if (ok) setIncoming(Array.isArray(data) ? data : []); else setErr(error || "Failed to load");
+        if (ok) setIncoming(Array.isArray(data) ? data : []);
+        else setErr(error || "Failed to load");
       } else {
         const { ok, data, error } = await FriendsAPI.listOutgoing();
-        if (ok) setOutgoing(Array.isArray(data) ? data : []); else setErr(error || "Failed to load");
+        if (ok) setOutgoing(Array.isArray(data) ? data : []);
+        else setErr(error || "Failed to load");
       }
-    } catch (e) { setErr(String(e?.message || e)); }
-    finally { setLoading(false); }
+    } catch (e) {
+      setErr(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
   }, [open, tab]);
 
   useEffect(() => { reload(); }, [reload]);
+
   return { incoming, setIncoming, outgoing, setOutgoing, loading, err, reload };
 }
 
-/* ---------- Shared RequestRow ---------- */
+/* ---------- shared RequestRow ---------- */
 function RequestRow({ item, mode, onDone }) {
   const u =
     item.user ||
@@ -87,6 +100,7 @@ function RequestRow({ item, mode, onDone }) {
 
   const { busy, accept, decline, cancel } = useFriendship({ userId: otherId, username: otherUsername });
 
+  // Local broadcast (ProfilePage/useFriendship listens)
   const broadcast = (type, id) => {
     try { window.dispatchEvent(new CustomEvent("nsz:friend", { detail: { type, otherId: id } })); } catch {}
     try {
@@ -110,21 +124,30 @@ function RequestRow({ item, mode, onDone }) {
       <div className="nb-rowR">
         {mode === "incoming" ? (
           <>
-            <button className="nb-btn gold" disabled={busy}
+            <button
+              className="nb-btn gold"
+              disabled={busy}
               onClick={async () => { broadcast("accepted", otherId); onDone?.(otherId, "accept"); await accept(); }}
-              title="Accept">
+              title="Accept"
+            >
               {busy ? <FaSpinner className="spin" /> : <FaCheck />}
             </button>
-            <button className="nb-btn" disabled={busy}
+            <button
+              className="nb-btn"
+              disabled={busy}
               onClick={async () => { broadcast("declined", otherId); onDone?.(otherId, "decline"); await decline(); }}
-              title="Decline">
+              title="Decline"
+            >
               {busy ? <FaSpinner className="spin" /> : <FaTimes />}
             </button>
           </>
         ) : (
-          <button className="nb-btn" disabled={busy}
+          <button
+            className="nb-btn"
+            disabled={busy}
             onClick={async () => { broadcast("canceled", otherId); onDone?.(otherId, "cancel"); await cancel(); }}
-            title="Cancel">
+            title="Cancel"
+          >
             {busy ? <FaSpinner className="spin" /> : <FaUndoAlt />}
           </button>
         )}
@@ -133,9 +156,11 @@ function RequestRow({ item, mode, onDone }) {
   );
 }
 
-/* ---------- Main bell ---------- */
+/* ---------- main bell ---------- */
 export default function NotificationBell({ className, onViewAll }) {
   const { user, loading: authLoading } = useAuth();
+
+  // All tab
   const {
     notifications,
     unreadCount,
@@ -147,42 +172,28 @@ export default function NotificationBell({ className, onViewAll }) {
   } = useNotifications();
   const removeNotification = _removeNotification || _clearOne;
 
+  // Counts / Requests tab
   const { counts, refreshCounts, setCounts } = useFriends();
 
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState("all");
   const [reqTab, setReqTab] = useState("incoming");
+
   const wrapRef = useOutsideClose(open, () => setOpen(false));
 
   const { incoming, setIncoming, outgoing, setOutgoing, loading: reqLoading, err: reqErr, reload } =
     useRequestLists(open && tab === "requests", reqTab);
 
-  /* ---------- All-tab fallback list ---------- */
+  // ---------- NEW: All-tab fallback to Friends incoming ----------
   const [allIncoming, setAllIncoming] = useState([]);
   const [allIncomingLoading, setAllIncomingLoading] = useState(false);
-
   const loadAllIncoming = useCallback(async () => {
     setAllIncomingLoading(true);
     try {
       const r = await FriendsAPI.listIncoming();
       if (r.ok) setAllIncoming(Array.isArray(r.data) ? r.data : r.data?.results || []);
-      else setAllIncoming([]);
     } finally { setAllIncomingLoading(false); }
   }, []);
-
-  // Ensure fallback fires *even if effects are skipped by timing*
-  useEffect(() => {
-    if (open && tab === "all") {
-      loadAllIncoming();
-    }
-  }, [open, tab, loadAllIncoming]);
-
-  // If All is open and notifications are empty and fallback not loaded, kick it once more
-  useEffect(() => {
-    if (open && tab === "all" && notifications.length === 0 && !allIncomingLoading && allIncoming.length === 0) {
-      loadAllIncoming();
-    }
-  }, [open, tab, notifications.length, allIncomingLoading, allIncoming.length, loadAllIncoming]);
 
   // Fetch notifications when panel opens
   const lastFetchRef = useRef(0);
@@ -195,19 +206,15 @@ export default function NotificationBell({ className, onViewAll }) {
 
   useEffect(() => {
     if (!authLoading && user && open && tab === "all") {
+      // Always try both: notifications + fallback incoming
       maybeFetchAll(true);
+      loadAllIncoming();
     }
-  }, [authLoading, user, open, tab, maybeFetchAll]);
+  }, [authLoading, user, open, tab, maybeFetchAll, loadAllIncoming]);
 
-  // Sockets refresh counts + retry fallback
+  // Socket counts refresh
   useEffect(() => {
-    const bump = () => {
-      refreshCounts();
-      if (open && tab === "all") {
-        maybeFetchAll(false);
-        loadAllIncoming();
-      }
-    };
+    const bump = () => { refreshCounts(); if (open && tab === "all") maybeFetchAll(false); };
     socket.on("friend:request:created", bump);
     socket.on("friend:request:canceled", bump);
     socket.on("friend:accepted", bump);
@@ -220,29 +227,31 @@ export default function NotificationBell({ className, onViewAll }) {
       socket.off("friend:declined", bump);
       socket.off("friend:removed", bump);
     };
-  }, [open, tab, refreshCounts, maybeFetchAll, loadAllIncoming]);
+  }, [open, tab, refreshCounts, maybeFetchAll]);
 
-  // Badge
+  // Badge = unread notifications + incoming requests
   const totalBadge = Math.max(0, Number(unreadCount || 0) + Number(counts?.incoming || 0));
 
   // Helpers
   const currentList = reqTab === "incoming" ? incoming : outgoing;
   const setCurrentList = reqTab === "incoming" ? setIncoming : setOutgoing;
-  const adjCounts = useCallback((d) => {
+
+  const adjCounts = useCallback((delta) => {
     setCounts?.((prev) => ({
-      incoming: Math.max(0, (prev?.incoming || 0) + (d.incoming || 0)),
-      outgoing: Math.max(0, (prev?.outgoing || 0) + (d.outgoing || 0)),
-      friends: Math.max(0, (prev?.friends || 0) + (d.friends || 0)),
+      incoming: Math.max(0, (prev?.incoming || 0) + (delta.incoming || 0)),
+      outgoing: Math.max(0, (prev?.outgoing || 0) + (delta.outgoing || 0)),
+      friends: Math.max(0, (prev?.friends || 0) + (delta.friends || 0)),
     }));
   }, [setCounts]);
 
+  // Clear friend_request in All by actor id
   const clearFriendRequestByActor = useCallback((actorId) => {
     notifications.forEach((n) => {
       if (n?.type === "friend_request" && String(n?.actor?._id || "") === String(actorId || "")) {
         try { markOneRead?.(n._id); removeNotification?.(n._id); } catch {}
       }
     });
-    // also remove from fallback
+    // also remove from fallback list
     setAllIncoming((curr) => curr.filter((r) =>
       String(
         (r.fromUser && (r.fromUser._id || r.fromUser.id)) ||
@@ -260,6 +269,7 @@ export default function NotificationBell({ className, onViewAll }) {
 
       {open && (
         <div className="nb-panel">
+          {/* Tabs */}
           <div className="nb-tabs">
             <button className={`nb-tab ${tab === "all" ? "active" : ""}`} onClick={() => setTab("all")}>All</button>
             <button className={`nb-tab ${tab === "requests" ? "active" : ""}`} onClick={() => { setTab("requests"); reload(); }}>
@@ -279,7 +289,7 @@ export default function NotificationBell({ className, onViewAll }) {
           {/* Body */}
           {tab === "all" ? (
             <div className="nb-body">
-              {/* Notifications list OR fallback */}
+              {/* First try NotificationContext items */}
               {notifications.length > 0 ? (
                 notifications.map((n) => {
                   if (n.type === "friend_request") {
@@ -295,6 +305,7 @@ export default function NotificationBell({ className, onViewAll }) {
                           item={item}
                           mode="incoming"
                           onDone={(actor, action) => {
+                            // Clear entry from All & Requests & counts
                             try { markOneRead?.(n._id); removeNotification?.(n._id); } catch {}
                             setIncoming((curr) =>
                               Array.isArray(curr)
@@ -309,7 +320,7 @@ export default function NotificationBell({ className, onViewAll }) {
                       </div>
                     );
                   }
-                  // other types (if present)
+                  // Other notif types (if used)
                   return (
                     <div key={n._id} className={`nb-item ${n.read ? "read" : "unread"}`}>
                       <img src={getProfileImageSrc(n?.actor?.profileImage || n?.fromProfileImage)} alt={n?.actor?.username || "user"} className="nb-avatar" />
@@ -325,6 +336,7 @@ export default function NotificationBell({ className, onViewAll }) {
                   );
                 })
               ) : (
+                // ---------- NEW: Fallback to Friends incoming ----------
                 <>
                   {allIncomingLoading && <div className="nb-empty"><FaSpinner className="spin" /> Loading…</div>}
                   {!allIncomingLoading && allIncoming.length === 0 && (
@@ -338,6 +350,7 @@ export default function NotificationBell({ className, onViewAll }) {
                           item={row}
                           mode="incoming"
                           onDone={(actorId, action) => {
+                            // remove from fallback and keep counts in sync
                             setAllIncoming((curr) =>
                               curr.filter((r) =>
                                 String(
@@ -359,8 +372,8 @@ export default function NotificationBell({ className, onViewAll }) {
               )}
             </div>
           ) : (
+            // ---------- Requests tab ----------
             <div className="nb-body">
-              {/* Requests tab */}
               <div className="nb-reqTabs">
                 <button className={`nb-reqTab ${reqTab === "incoming" ? "active" : ""}`} onClick={() => setReqTab("incoming")}>
                   Incoming{counts?.incoming ? ` (${counts.incoming})` : ""}
@@ -371,7 +384,11 @@ export default function NotificationBell({ className, onViewAll }) {
               </div>
 
               {reqLoading && <div className="nb-empty"><FaSpinner className="spin" /> Loading…</div>}
-              {!reqLoading && !reqErr && currentList.length === 0 && <div className="nb-empty">No {reqTab === "incoming" ? "incoming" : "sent"} requests.</div>}
+              {!reqLoading && reqErr && <div className="nb-empty">Error: {reqErr}</div>}
+              {!reqLoading && !reqErr && currentList.length === 0 && (
+                <div className="nb-empty">No {reqTab === "incoming" ? "incoming" : "sent"} requests.</div>
+              )}
+
               {!reqLoading && !reqErr && currentList.length > 0 && (
                 <div className="nb-list">
                   {currentList.map((item, i) => (
@@ -399,7 +416,29 @@ export default function NotificationBell({ className, onViewAll }) {
         </div>
       )}
 
-      {/* styles omitted for brevity (same as before) */}
+      {/* styles */}
+      <style>{`
+        .nb-bell{ position:relative; display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; border:1px solid #2b2b2b; background:#141414; color:#ffe066; cursor:pointer; }
+        .nb-badge{ position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 5px; border-radius:999px; background:#ff4d4f; color:#fff; font-size:11px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #400; }
+        .nb-panel{ position:absolute; right:0; top:calc(100% + 8px); width:min(420px, 92vw); max-height:70vh; overflow:hidden; z-index:1000; background:#0f0f0f; border:1px solid #2a2a2a; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5); }
+        .nb-tabs{ display:flex; align-items:center; gap:6px; padding:8px; border-bottom:1px solid #222; background:linear-gradient(180deg, rgba(255,224,102,.06), transparent); }
+        .nb-tab{ padding:6px 10px; border-radius:8px; border:1px solid #2b2b2b; background:#141414; color:#ffe066; cursor:pointer; font-weight:700; font-size:13px; }
+        .nb-tab.active{ background:#1b1b1b; box-shadow:inset 0 0 0 1px #333; }
+        .nb-spacer{ flex:1; }
+        .nb-ctrl{ padding:6px 10px; border-radius:8px; border:1px solid #2b2b2b; background:#141414; color:#ffe066; cursor:pointer; font-weight:700; }
+        .nb-body{ max-height:60vh; overflow:auto; }
+        .nb-empty{ padding:18px; color:#bbb; font-size:13px; display:flex; align-items:center; gap:8px; justify-content:center; }
+        .spin{ animation:spin .8s linear infinite; } @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+        .nb-list{ padding:6px 8px 10px; display:flex; flex-direction:column; gap:8px; }
+        .nb-row{ display:grid; grid-template-columns:1fr auto; align-items:center; gap:10px; padding:8px; border:1px solid #262626; border-radius:10px; background:#121212; }
+        .nb-rowL{ display:flex; align-items:center; gap:10px; min-width:0; }
+        .nb-rowUser{ min-width:0; }
+        .nb-name{ font-weight:700; color:#ffe066; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+        .nb-sub{ font-size:12px; color:#9a9a9a; }
+        .nb-rowR{ display:flex; align-items:center; gap:6px; }
+        .nb-btn{ width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center; border-radius:8px; border:1px solid #2a2a2a; background:#1a1a1a; color:#ffe066; cursor:pointer; }
+        .nb-btn.gold{ background:#ffe066; color:#111; border-color:#deb64c; }
+      `}</style>
     </div>
   );
 }
