@@ -1,6 +1,6 @@
+// frontend/src/components/NotificationBell.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FaBell, FaCheck, FaTimes, FaUndoAlt, FaSpinner } from "react-icons/fa";
-import { useNotifications } from "../context/NotificationContext";
 import { useAuth } from "../context/AuthContext";
 import { useFriends } from "../context/FriendsContext";
 import useFriendship from "../hooks/useFriendship";
@@ -21,14 +21,17 @@ function timeAgo(d) {
     const days = Math.floor(h / 24);
     if (days < 7) return `${days}d ago`;
     return date.toLocaleString();
-  } catch { return ""; }
+  } catch {
+    return "";
+  }
 }
 function getProfileImageSrc(src) {
   if (!src) return "/profilepic.jpg";
   if (src.startsWith("http")) return src;
   if (src.startsWith("/uploads")) {
     const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
-    const base = import.meta?.env?.VITE_API_BASE_URL || (isLocal ? "http://localhost:5000" : "");
+    const base =
+      import.meta?.env?.VITE_API_BASE_URL || (isLocal ? "http://localhost:5000" : "");
     return `${(base || "").replace(/\/$/, "")}${src}`;
   }
   return src;
@@ -37,8 +40,12 @@ function useOutsideClose(open, onClose) {
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
-    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) onClose?.(); }
-    function onKey(e) { if (e.key === "Escape") onClose?.(); }
+    function onDoc(e) {
+      if (ref.current && !ref.current.contains(e.target)) onClose?.();
+    }
+    function onKey(e) {
+      if (e.key === "Escape") onClose?.();
+    }
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -77,7 +84,9 @@ function useRequestLists(open, tab) {
     }
   }, [open, tab]);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
   return { incoming, setIncoming, outgoing, setOutgoing, loading, err, reload };
 }
@@ -86,7 +95,9 @@ function useRequestLists(open, tab) {
 function RequestRow({ item, mode, onDone }) {
   const u =
     item.user ||
-    (mode === "incoming" ? item.fromUser || item.from || item.sender : item.toUser || item.to || item.receiver) ||
+    (mode === "incoming"
+      ? item.fromUser || item.from || item.sender
+      : item.toUser || item.to || item.receiver) ||
     {};
   const otherId =
     (mode === "incoming"
@@ -98,11 +109,16 @@ function RequestRow({ item, mode, onDone }) {
   const otherUsername =
     item.username || u.username || item.fromUsername || item.toUsername || "";
 
-  const { busy, accept, decline, cancel } = useFriendship({ userId: otherId, username: otherUsername });
+  const { busy, accept, decline, cancel } = useFriendship({
+    userId: otherId,
+    username: otherUsername,
+  });
 
   // Local broadcast (ProfilePage/useFriendship listens)
   const broadcast = (type, id) => {
-    try { window.dispatchEvent(new CustomEvent("nsz:friend", { detail: { type, otherId: id } })); } catch {}
+    try {
+      window.dispatchEvent(new CustomEvent("nsz:friend", { detail: { type, otherId: id } }));
+    } catch {}
     try {
       if ("BroadcastChannel" in window) {
         const bc = new BroadcastChannel("nsz:friend");
@@ -115,10 +131,15 @@ function RequestRow({ item, mode, onDone }) {
   return (
     <div className="nb-row">
       <div className="nb-rowL">
-        <AvatarImg user={{ _id: otherId, username: otherUsername, profileImage: u.profileImage }} size={36} />
+        <AvatarImg
+          user={{ _id: otherId, username: otherUsername, profileImage: u.profileImage }}
+          size={36}
+        />
         <div className="nb-rowUser">
           <div className="nb-name">@{otherUsername || "user"}</div>
-          <div className="nb-sub">{mode === "incoming" ? "sent you a request" : "you sent a request"}</div>
+          <div className="nb-sub">
+            {mode === "incoming" ? "sent you a request" : "you sent a request"}
+          </div>
         </div>
       </div>
       <div className="nb-rowR">
@@ -127,7 +148,11 @@ function RequestRow({ item, mode, onDone }) {
             <button
               className="nb-btn gold"
               disabled={busy}
-              onClick={async () => { broadcast("accepted", otherId); onDone?.(otherId, "accept"); await accept(); }}
+              onClick={async () => {
+                broadcast("accepted", otherId);
+                onDone?.(otherId, "accept");
+                await accept();
+              }}
               title="Accept"
             >
               {busy ? <FaSpinner className="spin" /> : <FaCheck />}
@@ -135,7 +160,11 @@ function RequestRow({ item, mode, onDone }) {
             <button
               className="nb-btn"
               disabled={busy}
-              onClick={async () => { broadcast("declined", otherId); onDone?.(otherId, "decline"); await decline(); }}
+              onClick={async () => {
+                broadcast("declined", otherId);
+                onDone?.(otherId, "decline");
+                await decline();
+              }}
               title="Decline"
             >
               {busy ? <FaSpinner className="spin" /> : <FaTimes />}
@@ -145,7 +174,11 @@ function RequestRow({ item, mode, onDone }) {
           <button
             className="nb-btn"
             disabled={busy}
-            onClick={async () => { broadcast("canceled", otherId); onDone?.(otherId, "cancel"); await cancel(); }}
+            onClick={async () => {
+              broadcast("canceled", otherId);
+              onDone?.(otherId, "cancel");
+              await cancel();
+            }}
             title="Cancel"
           >
             {busy ? <FaSpinner className="spin" /> : <FaUndoAlt />}
@@ -160,19 +193,7 @@ function RequestRow({ item, mode, onDone }) {
 export default function NotificationBell({ className, onViewAll }) {
   const { user, loading: authLoading } = useAuth();
 
-  // All tab
-  const {
-    notifications,
-    unreadCount,
-    fetchNotifications,
-    markOneRead,
-    markAllRead,
-    removeNotification: _removeNotification,
-    clearOne: _clearOne,
-  } = useNotifications();
-  const removeNotification = _removeNotification || _clearOne;
-
-  // Counts / Requests tab
+  // Counts / Requests tab (from Friends context)
   const { counts, refreshCounts, setCounts } = useFriends();
 
   const [open, setOpen] = useState(false);
@@ -181,40 +202,55 @@ export default function NotificationBell({ className, onViewAll }) {
 
   const wrapRef = useOutsideClose(open, () => setOpen(false));
 
-  const { incoming, setIncoming, outgoing, setOutgoing, loading: reqLoading, err: reqErr, reload } =
-    useRequestLists(open && tab === "requests", reqTab);
+  const {
+    incoming,
+    setIncoming,
+    outgoing,
+    setOutgoing,
+    loading: reqLoading,
+    err: reqErr,
+    reload,
+} = useRequestLists(open && tab === "requests", reqTab);
 
-  // ---------- NEW: All-tab fallback to Friends incoming ----------
+  // ---------- "All" tab uses incoming requests as notifications ----------
   const [allIncoming, setAllIncoming] = useState([]);
   const [allIncomingLoading, setAllIncomingLoading] = useState(false);
+  const [dismissedIds, setDismissedIds] = useState(() => new Set()); // local "mark read"
+
   const loadAllIncoming = useCallback(async () => {
     setAllIncomingLoading(true);
     try {
       const r = await FriendsAPI.listIncoming();
       if (r.ok) setAllIncoming(Array.isArray(r.data) ? r.data : r.data?.results || []);
-    } finally { setAllIncomingLoading(false); }
+    } finally {
+      setAllIncomingLoading(false);
+    }
   }, []);
 
-  // Fetch notifications when panel opens
+  // Fetch when panel opens
   const lastFetchRef = useRef(0);
-  const maybeFetchAll = useCallback(async (force = false) => {
-    const now = Date.now();
-    if (!force && now - lastFetchRef.current < 1200) return;
-    lastFetchRef.current = now;
-    await fetchNotifications();
-  }, [fetchNotifications]);
+  const maybeFetchAll = useCallback(
+    async (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastFetchRef.current < 800) return;
+      lastFetchRef.current = now;
+      await Promise.all([refreshCounts(), loadAllIncoming()]);
+    },
+    [refreshCounts, loadAllIncoming]
+  );
 
   useEffect(() => {
     if (!authLoading && user && open && tab === "all") {
-      // Always try both: notifications + fallback incoming
       maybeFetchAll(true);
-      loadAllIncoming();
     }
-  }, [authLoading, user, open, tab, maybeFetchAll, loadAllIncoming]);
+  }, [authLoading, user, open, tab, maybeFetchAll]);
 
   // Socket counts refresh
   useEffect(() => {
-    const bump = () => { refreshCounts(); if (open && tab === "all") maybeFetchAll(false); };
+    const bump = () => {
+      refreshCounts();
+      if (open && tab === "all") maybeFetchAll(false);
+    };
     socket.on("friend:request:created", bump);
     socket.on("friend:request:canceled", bump);
     socket.on("friend:accepted", bump);
@@ -229,164 +265,177 @@ export default function NotificationBell({ className, onViewAll }) {
     };
   }, [open, tab, refreshCounts, maybeFetchAll]);
 
-  // Badge = unread notifications + incoming requests
-  const totalBadge = Math.max(0, Number(unreadCount || 0) + Number(counts?.incoming || 0));
+  // Badge = incoming requests minus locally dismissed "reads"
+  const effectiveIncoming = Math.max(
+    0,
+    Number(counts?.incoming || 0) - Number(dismissedIds.size || 0)
+  );
+  const totalBadge = effectiveIncoming;
 
-  // Helpers
   const currentList = reqTab === "incoming" ? incoming : outgoing;
   const setCurrentList = reqTab === "incoming" ? setIncoming : setOutgoing;
 
-  const adjCounts = useCallback((delta) => {
-    setCounts?.((prev) => ({
-      incoming: Math.max(0, (prev?.incoming || 0) + (delta.incoming || 0)),
-      outgoing: Math.max(0, (prev?.outgoing || 0) + (delta.outgoing || 0)),
-      friends: Math.max(0, (prev?.friends || 0) + (delta.friends || 0)),
-    }));
-  }, [setCounts]);
+  const adjCounts = useCallback(
+    (delta) => {
+      setCounts?.((prev) => ({
+        incoming: Math.max(0, (prev?.incoming || 0) + (delta.incoming || 0)),
+        outgoing: Math.max(0, (prev?.outgoing || 0) + (delta.outgoing || 0)),
+        friends: Math.max(0, (prev?.friends || 0) + (delta.friends || 0)),
+      }));
+    },
+    [setCounts]
+  );
 
-  // Clear friend_request in All by actor id
-  const clearFriendRequestByActor = useCallback((actorId) => {
-    notifications.forEach((n) => {
-      if (n?.type === "friend_request" && String(n?.actor?._id || "") === String(actorId || "")) {
-        try { markOneRead?.(n._id); removeNotification?.(n._id); } catch {}
-      }
-    });
-    // also remove from fallback list
-    setAllIncoming((curr) => curr.filter((r) =>
-      String(
-        (r.fromUser && (r.fromUser._id || r.fromUser.id)) ||
-        r.fromUserId || r.userId || r.from || ""
-      ) !== String(actorId || "")
-    ));
-  }, [notifications, markOneRead, removeNotification]);
+  const markAllReadLocal = () => {
+    try {
+      const ids = new Set(dismissedIds);
+      // Treat all current incoming items as "read" locally for badge purposes
+      allIncoming.forEach((row) => {
+        const id =
+          (row.fromUser && (row.fromUser._id || row.fromUser.id)) ||
+          row.fromUserId ||
+          row.userId ||
+          row.from ||
+          "";
+        if (id) ids.add(String(id));
+      });
+      setDismissedIds(ids);
+    } catch {}
+  };
 
   return (
     <div ref={wrapRef} className={className} style={{ position: "relative" }}>
-      <button aria-label="Notifications" onClick={() => setOpen((v) => !v)} className="nb-bell">
+      <button
+        aria-label="Notifications"
+        onClick={() => setOpen((v) => !v)}
+        className="nb-bell"
+      >
         <FaBell />
-        {totalBadge > 0 && <span className="nb-badge">{totalBadge > 99 ? "99+" : totalBadge}</span>}
+        {totalBadge > 0 && (
+          <span className="nb-badge">{totalBadge > 99 ? "99+" : totalBadge}</span>
+        )}
       </button>
 
       {open && (
         <div className="nb-panel">
           {/* Tabs */}
           <div className="nb-tabs">
-            <button className={`nb-tab ${tab === "all" ? "active" : ""}`} onClick={() => setTab("all")}>All</button>
-            <button className={`nb-tab ${tab === "requests" ? "active" : ""}`} onClick={() => { setTab("requests"); reload(); }}>
+            <button
+              className={`nb-tab ${tab === "all" ? "active" : ""}`}
+              onClick={() => setTab("all")}
+            >
+              All
+            </button>
+            <button
+              className={`nb-tab ${tab === "requests" ? "active" : ""}`}
+              onClick={() => {
+                setTab("requests");
+                reload();
+              }}
+            >
               Requests{counts?.incoming ? ` (${counts.incoming})` : ""}
             </button>
             <div className="nb-spacer" />
             {tab === "all" ? (
               <>
-                <button onClick={() => { maybeFetchAll(true); loadAllIncoming(); }} className="nb-ctrl" title="Refresh">Refresh</button>
-                <button onClick={markAllRead} className={`nb-ctrl ${unreadCount === 0 ? "disabled" : ""}`} disabled={unreadCount === 0} title="Mark all read">Mark all read</button>
+                <button
+                  onClick={() => maybeFetchAll(true)}
+                  className="nb-ctrl"
+                  title="Refresh"
+                >
+                  Refresh
+                </button>
+                <button
+                  onClick={markAllReadLocal}
+                  className="nb-ctrl"
+                  title="Mark all read"
+                >
+                  Mark all read
+                </button>
               </>
             ) : (
-              <button onClick={() => reload()} className="nb-ctrl" title="Refresh requests">↻</button>
+              <button onClick={() => reload()} className="nb-ctrl" title="Refresh requests">
+                ↻
+              </button>
             )}
           </div>
 
           {/* Body */}
           {tab === "all" ? (
             <div className="nb-body">
-              {/* First try NotificationContext items */}
-              {notifications.length > 0 ? (
-                notifications.map((n) => {
-                  if (n.type === "friend_request") {
-                    const actorId = n?.actor?._id || "";
-                    const item = {
-                      fromUserId: actorId,
-                      fromUser: n?.actor ? { _id: n.actor._id, username: n.actor.username, profileImage: n.actor.profileImage } : null,
-                      createdAt: n.createdAt,
-                    };
-                    return (
-                      <div key={n._id} style={{ padding: "8px 8px 0" }}>
-                        <RequestRow
-                          item={item}
-                          mode="incoming"
-                          onDone={(actor, action) => {
-                            // Clear entry from All & Requests & counts
-                            try { markOneRead?.(n._id); removeNotification?.(n._id); } catch {}
-                            setIncoming((curr) =>
-                              Array.isArray(curr)
-                                ? curr.filter((r) => String(r.fromUserId || r.userId || r.from) !== String(actor || actorId))
-                                : curr
-                            );
-                            if (action === "accept") adjCounts({ incoming: -1, friends: +1 });
-                            else if (action === "decline") adjCounts({ incoming: -1 });
-                            refreshCounts();
-                          }}
-                        />
-                      </div>
-                    );
-                  }
-                  // Other notif types (if used)
-                  return (
-                    <div key={n._id} className={`nb-item ${n.read ? "read" : "unread"}`}>
-                      <img src={getProfileImageSrc(n?.actor?.profileImage || n?.fromProfileImage)} alt={n?.actor?.username || "user"} className="nb-avatar" />
-                      <div className="nb-content">
-                        <div className="nb-line">
-                          <strong>@{n?.actor?.username || "Someone"}</strong>{" "}
-                          <span>{String(n.message || "").replace(n?.actor?.username || "", "").trim()}</span>
-                        </div>
-                        <div className="nb-time">{timeAgo(n.createdAt)}</div>
-                      </div>
-                      {!n.read && <button onClick={() => markOneRead?.(n._id)} className="nb-mark">Mark read</button>}
+              {/* Incoming requests rendered as notifications */}
+              {allIncomingLoading && (
+                <div className="nb-empty">
+                  <FaSpinner className="spin" /> Loading…
+                </div>
+              )}
+              {!allIncomingLoading && allIncoming.length === 0 && (
+                <div className="nb-empty">No notifications yet.</div>
+              )}
+              {!allIncomingLoading && allIncoming.length > 0 && (
+                <div className="nb-list" style={{ padding: "8px" }}>
+                  {allIncoming.map((row, i) => (
+                    <div key={i} style={{ padding: "0 0 0" }}>
+                      <RequestRow
+                        item={row}
+                        mode="incoming"
+                        onDone={(actorId, action) => {
+                          // Remove from All, sync counts
+                          setAllIncoming((curr) =>
+                            curr.filter((r) =>
+                              String(
+                                (r.fromUser && (r.fromUser._id || r.fromUser.id)) ||
+                                  r.fromUserId ||
+                                  r.userId ||
+                                  r.from ||
+                                  ""
+                              ) !== String(actorId || "")
+                            )
+                          );
+                          // Clear local badge for this actor
+                          setDismissedIds((ids) => {
+                            const next = new Set(ids);
+                            next.add(String(actorId || ""));
+                            return next;
+                          });
+                          if (action === "accept") adjCounts({ incoming: -1, friends: +1 });
+                          else if (action === "decline") adjCounts({ incoming: -1 });
+                          refreshCounts();
+                        }}
+                      />
                     </div>
-                  );
-                })
-              ) : (
-                // ---------- NEW: Fallback to Friends incoming ----------
-                <>
-                  {allIncomingLoading && <div className="nb-empty"><FaSpinner className="spin" /> Loading…</div>}
-                  {!allIncomingLoading && allIncoming.length === 0 && (
-                    <div className="nb-empty">No notifications yet.</div>
-                  )}
-                  {!allIncomingLoading && allIncoming.length > 0 && (
-                    <div className="nb-list" style={{ padding: "8px" }}>
-                      {allIncoming.map((row, i) => (
-                        <RequestRow
-                          key={i}
-                          item={row}
-                          mode="incoming"
-                          onDone={(actorId, action) => {
-                            // remove from fallback and keep counts in sync
-                            setAllIncoming((curr) =>
-                              curr.filter((r) =>
-                                String(
-                                  (r.fromUser && (r.fromUser._id || r.fromUser.id)) ||
-                                  r.fromUserId || r.userId || r.from || ""
-                                ) !== String(actorId || "")
-                              )
-                            );
-                            clearFriendRequestByActor(actorId);
-                            if (action === "accept") adjCounts({ incoming: -1, friends: +1 });
-                            else if (action === "decline") adjCounts({ incoming: -1 });
-                            refreshCounts();
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </>
+                  ))}
+                </div>
               )}
             </div>
           ) : (
             // ---------- Requests tab ----------
             <div className="nb-body">
               <div className="nb-reqTabs">
-                <button className={`nb-reqTab ${reqTab === "incoming" ? "active" : ""}`} onClick={() => setReqTab("incoming")}>
+                <button
+                  className={`nb-reqTab ${reqTab === "incoming" ? "active" : ""}`}
+                  onClick={() => setReqTab("incoming")}
+                >
                   Incoming{counts?.incoming ? ` (${counts.incoming})` : ""}
                 </button>
-                <button className={`nb-reqTab ${reqTab === "outgoing" ? "active" : ""}`} onClick={() => setReqTab("outgoing")}>
+                <button
+                  className={`nb-reqTab ${reqTab === "outgoing" ? "active" : ""}`}
+                  onClick={() => setReqTab("outgoing")}
+                >
                   Sent{counts?.outgoing ? ` (${counts.outgoing})` : ""}
                 </button>
               </div>
 
-              {reqLoading && <div className="nb-empty"><FaSpinner className="spin" /> Loading…</div>}
+              {reqLoading && (
+                <div className="nb-empty">
+                  <FaSpinner className="spin" /> Loading…
+                </div>
+              )}
               {!reqLoading && reqErr && <div className="nb-empty">Error: {reqErr}</div>}
               {!reqLoading && !reqErr && currentList.length === 0 && (
-                <div className="nb-empty">No {reqTab === "incoming" ? "incoming" : "sent"} requests.</div>
+                <div className="nb-empty">
+                  No {reqTab === "incoming" ? "incoming" : "sent"} requests.
+                </div>
               )}
 
               {!reqLoading && !reqErr && currentList.length > 0 && (
@@ -397,8 +446,28 @@ export default function NotificationBell({ className, onViewAll }) {
                       item={item}
                       mode={reqTab}
                       onDone={(actorId, action) => {
-                        setCurrentList((curr) => { const next = curr.slice(); next.splice(i, 1); return next; });
-                        clearFriendRequestByActor(actorId);
+                        setCurrentList((curr) => {
+                          const next = curr.slice();
+                          next.splice(i, 1);
+                          return next;
+                        });
+                        // Also clear from "All" view & local badge
+                        setAllIncoming((curr) =>
+                          curr.filter((r) =>
+                            String(
+                              (r.fromUser && (r.fromUser._id || r.fromUser.id)) ||
+                                r.fromUserId ||
+                                r.userId ||
+                                r.from ||
+                                ""
+                            ) !== String(actorId || "")
+                          )
+                        );
+                        setDismissedIds((ids) => {
+                          const next = new Set(ids);
+                          next.add(String(actorId || ""));
+                          return next;
+                        });
                         if (reqTab === "incoming") {
                           if (action === "accept") adjCounts({ incoming: -1, friends: +1 });
                           else if (action === "decline") adjCounts({ incoming: -1 });
