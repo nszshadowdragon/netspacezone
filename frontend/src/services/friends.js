@@ -15,10 +15,29 @@
  */
 
 const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
-const API_BASE =
-  (import.meta?.env?.VITE_API_BASE_URL ||
-    import.meta?.env?.VITE_API_BASE ||
-    (isLocal ? "http://localhost:5000" : ""))?.replace?.(/\/$/, "") || "";
+
+// --- Match api.js behavior so prod points to https://api.<apex> ---
+function deriveProdBase() {
+  const host = window.location.hostname; // e.g., netspacezone.com | www.netspacezone.com
+  if (!host) return "";
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length >= 2) {
+    const apex = parts.slice(-2).join(".");
+    return `https://api.${apex}`;
+  }
+  return "";
+}
+
+const ENV_BASE =
+  (typeof import.meta !== "undefined" &&
+    (import.meta?.env?.VITE_API_BASE_URL || import.meta?.env?.VITE_API_BASE)) || "";
+
+const API_BASE = (ENV_BASE || (isLocal ? "http://localhost:5000" : deriveProdBase())).replace(/\/$/, "");
+
+if (!API_BASE) {
+  // eslint-disable-next-line no-console
+  console.warn("[friends] API_BASE could not be resolved; requests will be relative to origin.");
+}
 
 export const FRIEND_STATUS = /** @type {const} */ ({
   SELF: "self",
@@ -76,17 +95,15 @@ async function requestJSON(path, { method = "GET", headers, body, qs } = {}, _re
   // Build headers conservatively
   const baseHeaders = {};
   if (!isGet) {
-    // Mutating requests: keep JSON and Authorization
     if (!(body instanceof FormData)) baseHeaders["Content-Type"] = "application/json";
     if (token) baseHeaders["Authorization"] = `Bearer ${token}`;
   }
-  // Merge any explicit headers the caller passed (rare)
   Object.assign(baseHeaders, headers || {});
 
   const res = await fetch(url.toString(), {
     method,
     credentials: "include",
-    headers: baseHeaders, // GET has no custom headers → cookie-only auth (no preflight)
+    headers: baseHeaders,
     body: body
       ? body instanceof FormData
         ? body
@@ -98,7 +115,6 @@ async function requestJSON(path, { method = "GET", headers, body, qs } = {}, _re
   if (isGet && res.status === 401 && !_retried) {
     const ok = await primeAuthFromCookie();
     if (ok) {
-      // retry GET with Authorization header this time
       const retryHeaders = { ...(headers || {}) };
       const t2 = getToken();
       if (t2) retryHeaders["Authorization"] = `Bearer ${t2}`;
