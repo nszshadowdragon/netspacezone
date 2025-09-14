@@ -1,7 +1,6 @@
 // src/context/NotificationContext.jsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import socket from "../socket";
-import api from "../api";
 import { useAuth } from "./AuthContext";
 import FriendsAPI from "../services/friends";
 
@@ -68,30 +67,29 @@ export const NotificationProvider = ({ children }) => {
 
   /* ---------- Normalize various incoming row shapes ---------- */
   function resolveActorIdFromIncoming(row) {
-    // Common fields across different backends
-    const direct =
-      row.fromUserId || row.requestedBy || row.senderId || row.sender || row.from ||
-      row.userId || row.by || row.a || row.userA || row.user || row.actorId;
+    // 1) direct id on the row (common when API returns plain user objects)
+    if (row && (row._id || row.id)) return String(row._id || row.id);
 
+    // 2) common flat id fields
+    const direct =
+      row?.fromUserId || row?.requestedBy || row?.senderId || row?.sender || row?.from ||
+      row?.userId || row?.by || row?.a || row?.userA || row?.user || row?.actorId;
     if (direct) return String(direct);
 
-    // Nested user objects
+    // 3) nested user objects
     const nested =
-      (row.fromUser && (row.fromUser._id || row.fromUser.id)) ||
-      (row.user && (row.user._id || row.user.id)) ||
-      (row.actor && (row.actor._id || row.actor.id));
-
+      (row?.fromUser && (row.fromUser._id || row.fromUser.id)) ||
+      (row?.user && (row.user._id || row.user.id)) ||
+      (row?.actor && (row.actor._id || row.actor.id));
     if (nested) return String(nested);
 
-    // Fallback: pairKey like "minId:maxId" — pick the one that's not me
-    if (row.pairKey && typeof row.pairKey === "string" && row.pairKey.includes(":")) {
+    // 4) fallback: pairKey like "minId:maxId"
+    if (row?.pairKey && typeof row.pairKey === "string" && row.pairKey.includes(":")) {
       const [a, b] = row.pairKey.split(":");
       if (String(a) === myId) return String(b);
       if (String(b) === myId) return String(a);
-      // no match → pick the second as a last resort
       return String(b || a || "");
     }
-
     return "";
   }
 
@@ -99,99 +97,89 @@ export const NotificationProvider = ({ children }) => {
     const actorId = resolveActorIdFromIncoming(row);
     if (!actorId) return null;
 
+    // Support both "row is a user" and "row has nested user"
     const actorObj =
-      row.fromUser || row.user || row.actor || null;
+      row?.fromUser || row?.user || row?.actor || (row?._id || row?.id ? row : null);
 
     const username =
-      (actorObj && (actorObj.username || actorObj.userName)) || row.fromUsername || row.username || "";
+      (actorObj && (actorObj.username || actorObj.userName)) ||
+      row?.fromUsername || row?.username || "";
 
     const profileImage =
-      (actorObj && (actorObj.profileImage || actorObj.profilePic)) || row.profileImage || "";
+      (actorObj && (actorObj.profileImage || actorObj.profilePic)) ||
+      row?.profileImage || "";
 
     return {
-      _id: `frq:${actorId}:${row.id || row._id || Date.now()}`,
+      _id: `frq:${actorId}:${row?.id || row?._id || Date.now()}`,
       type: "friend_request",
       actor: { _id: String(actorId), username, profileImage },
       message: " sent you a friend request",
       link: username ? `/profile/${username}` : "",
-      createdAt: row.createdAt || new Date().toISOString(),
+      createdAt: row?.createdAt || new Date().toISOString(),
       read: false,
     };
   }
 
-  /* ---------- Always backfill from Friends (even if /notifications 404) ---------- */
+  /* ---------- Backfill from Friends (single source of truth) ---------- */
   async function backfillFromFriends() {
     try {
-      const inc = await FriendsAPI.listIncoming();
+      const [inc, cnt] = await Promise.all([FriendsAPI.listIncoming(), FriendsAPI.getCounts()]);
       const rows = inc.ok
         ? Array.isArray(inc.data)
           ? inc.data
           : inc.data?.results || inc.data?.items || []
         : [];
 
+      const mapped = [];
       rows.forEach((r) => {
         const n = buildFriendRequestNotif(r);
-        if (n) { addOne(n); cacheAdd(n); }
+        if (n) { mapped.push(n); cacheAdd(n); }
       });
-    } catch {/* ignore */}
-  }
 
-  /* ---------- Fetch and merge ---------- */
-  const fetchNotifications = async () => {
-    // Merge cached friend requests immediately
-    readCache().forEach(addOne);
-
-    // Try REST store (fine if 404)
-    const r = await api.get("/api/notifications");
-    if (r.ok && Array.isArray(r.data?.items)) {
       setNotifications((prev) => {
-        const merged = dedupe([...r.data.items, ...prev]).sort(
+        const merged = dedupe([...mapped, ...readCache(), ...prev]).sort(
           (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
         );
         recomputeUnread(merged);
         return merged;
       });
-    } else {
-      // eslint-disable-next-line no-console
-      console.warn("Notifications fetch error; using friends backfill.", r.status);
+
+      // use server counts if available; otherwise fall back to mapped length
+      const incomingCount = Number(cnt?.data?.incoming ?? mapped.length ?? 0);
+      setUnreadCount((prev) => {
+        // unread = at least the incoming count; keep "read" flags respected
+        return Math.max(
+          incomingCount,
+          prev
+        );
+      });
+    } catch {
+      // ignore silently; sockets will still add live items
     }
+  }
 
-    // Always backfill incoming requests from Friends
-    await backfillFromFriends();
-  };
-
-  /* ---------- Join per-user socket room ---------- */
+  /* ---------- Hydrate on login (cache + friends backfill) ---------- */
   useEffect(() => {
     if (!myId || loading) return;
     try { socket.connect?.(); } catch {}
     try { socket.emit("presence:join", { userId: myId }); } catch {}
+    // seed from cache immediately
+    readCache().forEach(addOne);
+    // then fetch from Friends
+    backfillFromFriends();
     return () => { try { socket.emit("presence:leave"); } catch {} };
   }, [myId, loading]);
 
-  /* ---------- Sockets + synth + cache (tolerant to payloads) ---------- */
+  /* ---------- Sockets + cache ---------- */
   useEffect(() => {
-    if (!user || loading) return;
-
-    // hydrate (cache + /notifications + friends backfill)
-    fetchNotifications();
-
-    const onNotification = (raw) => {
-      const n = raw?.payload ? raw.payload : raw;
-      if (raw?.toUserId && String(raw.toUserId) !== myId) return;
-      if (!n) return;
-      addOne(n);
-      if (n.type === "friend_request") cacheAdd(n);
-    };
+    if (!myId || loading) return;
 
     const onFriendRequestCreated = (payload = {}) => {
-      // payload might be { fromUserId, toUserId } or more legacy fields
-      // Only consider if it's addressed to me
       const toId = String(
         payload.toUserId || payload.requestedTo || payload.to || payload.b || payload.userB || ""
       );
       if (toId && toId !== myId) return;
 
-      // Build a synthetic notif using whatever we have
       const r = {
         fromUserId:
           payload.fromUserId || payload.requestedBy || payload.from || payload.a || payload.userA || "",
@@ -204,31 +192,27 @@ export const NotificationProvider = ({ children }) => {
     };
 
     const onFriendAccepted = (payload = {}) => {
-      // Remove cached request so it won't reappear on refresh
       const a = String(payload.a || payload.userA || payload.fromUserId || "");
       const b = String(payload.b || payload.userB || payload.toUserId || "");
       const other = a === myId ? b : b === myId ? a : "";
       if (other) cacheRemoveByActor(other);
+      // also refresh counts to keep badge honest
+      FriendsAPI.getCounts().then(({ data }) => {
+        if (data) setUnreadCount(Number(data.incoming || 0));
+      }).catch(()=>{});
     };
 
-    socket.on("notification:new", onNotification);
-    socket.on("notification:update", onNotification);
-    socket.on("notification:remove", onNotification);
     socket.on("friend:request:created", onFriendRequestCreated);
     socket.on("friend:accepted", onFriendAccepted);
 
     return () => {
-      socket.off("notification:new", onNotification);
-      socket.off("notification:update", onNotification);
-      socket.off("notification:remove", onNotification);
       socket.off("friend:request:created", onFriendRequestCreated);
       socket.off("friend:accepted", onFriendAccepted);
     };
-  }, [user, loading, myId]);
+  }, [myId, loading]);
 
-  /* ---------- Actions (tolerate missing REST) ---------- */
+  /* ---------- Actions (safe if REST endpoints are missing) ---------- */
   const markOneRead = async (id) => {
-    try { await api.patch(`/api/notifications/${id}/read`); } catch {}
     setNotifications((prev) => {
       const next = prev.map((n) => (n._id === id ? { ...n, read: true } : n));
       recomputeUnread(next);
@@ -237,7 +221,6 @@ export const NotificationProvider = ({ children }) => {
   };
 
   const markAllRead = async () => {
-    try { await api.post("/api/notifications/read-all"); } catch {}
     setNotifications((prev) => {
       const next = prev.map((n) => ({ ...n, read: true }));
       recomputeUnread(next);
@@ -246,7 +229,6 @@ export const NotificationProvider = ({ children }) => {
   };
 
   const clearOne = async (id) => {
-    try { await api.del(`/api/notifications/${id}`); } catch {}
     setNotifications((prev) => {
       const target = prev.find((n) => n._id === id);
       if (target?.type === "friend_request") {
@@ -260,7 +242,6 @@ export const NotificationProvider = ({ children }) => {
   };
 
   const clearAll = async () => {
-    try { await api.del("/api/notifications"); } catch {}
     setNotifications([]);
     setUnreadCount(0);
     // keep cached incoming; they reflect real pending requests
@@ -272,7 +253,7 @@ export const NotificationProvider = ({ children }) => {
       unreadCount: unreadCount >= 51 ? "50+" : unreadCount,
       filterState,
       setFilterState,
-      fetchNotifications,
+      fetchNotifications: backfillFromFriends, // expose for manual refresh
       markOneRead,
       markAllRead,
       clearOne,
