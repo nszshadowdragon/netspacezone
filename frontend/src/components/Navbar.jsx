@@ -5,7 +5,7 @@ import SearchBar from "./SearchBar";
 import { useAuth } from "../context/AuthContext";
 import NotificationBell from "./NotificationBell";
 import NotificationsPopup from "./NotificationsPopup";
-import themeSelector from "./themeSelector";
+import ThemeSelector from "./ThemeSelector"; // Correct import
 
 /* --------------------- helpers --------------------- */
 function isLocalhost() {
@@ -69,7 +69,7 @@ export default function Navbar({ unreadCount = 0 }) {
   const [navH, setNavH] = useState(92);
   const [rightInset, setRightInset] = useState("0px");
 
-  const GOLD = "var(--primary-color)"; // use CSS variable for theme
+  const GOLD = "var(--primary-color)";
 
   useEffect(() => setCurrentUser(user), [user]);
 
@@ -224,7 +224,7 @@ export default function Navbar({ unreadCount = 0 }) {
         <div className="nsz-search" style={{ width: "100%" }}><SearchBar /></div>
 
         <div className="nsz-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <themeSelector />
+          <ThemeSelector /> {/* Correct JSX usage */}
           <NotificationBell className="nb-anchor" onViewAll={() => setShowAllPopup(true)} />
           <Link
             to={profilePath}

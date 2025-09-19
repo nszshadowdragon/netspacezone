@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { useTheme, getThemeVars } from "../context/ThemeContext";
+import { useTheme, getThemeVars } from "../context/ThemeContext"; // fixed import
 import ImageGallery from "../components/ImageGallery";
 import AvatarImg from "../components/AvatarImg";
 import useFriendship from "../hooks/useFriendship";
@@ -50,7 +50,7 @@ export default function ProfilePage() {
   const location = useLocation();
   const { username: routeUsername } = useParams();
   const { user } = useAuth();
-  const { theme: viewerTheme } = useTheme();
+  const { theme: viewerTheme } = useTheme(); // fixed usage
 
   const [profileUser, setProfileUser] = useState(null);
   const [profileThemeVars, setProfileThemeVars] = useState(null);
