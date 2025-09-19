@@ -1,0 +1,29 @@
+[33mcommit aeb6a0e894fd07f524626f4ccac0fd3736929a06[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: yungpakaskillz <dev92rob@gmail.com>
+Date:   Fri Sep 19 15:05:31 2025 -0500
+
+    Temp rename ThemeSelector to fix casing
+
+[33mcommit c652e95f3c05f37db26f41041fa43ec87b9f8b2a[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: yungpakaskillz <dev92rob@gmail.com>
+Date:   Fri Sep 19 14:52:22 2025 -0500
+
+    Fix Navbar import: ThemeSelector.jsx update for Vercel build
+
+[33mcommit b440dd65b864d172002065aad7314bd184235aa2[m
+Author: yungpakaskillz <dev92rob@gmail.com>
+Date:   Fri Sep 19 14:46:23 2025 -0500
+
+    Fix ThemeContext import in ProfilePage, update useTheme usage
+
+[33mcommit 5ae6990d5de59d6f77b1880d875bcba165921941[m
+Author: yungpakaskillz <dev92rob@gmail.com>
+Date:   Fri Sep 19 14:08:01 2025 -0500
+
+    Fix: correct case for ThemeSelector import for Vercel build
+
+[33mcommit 59615401956cfa59f4d88fa76b9adf4be095512b[m
+Author: yungpakaskillz <dev92rob@gmail.com>
+Date:   Fri Sep 19 13:42:09 2025 -0500
+
+    Fix: ProfilePage theme persists per user and Vercel-safe SSR
