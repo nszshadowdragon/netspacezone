@@ -1,16 +1,14 @@
-// frontend/src/pages/ProfilePage.jsx
 import React, { useState, useEffect, useMemo } from "react";
-import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { useTheme, getThemeVars } from "../context/ThemeContext"; // fixed import
+import { useTheme, getThemeVars } from "../context/ThemeContext";
 import ImageGallery from "../components/ImageGallery";
 import AvatarImg from "../components/AvatarImg";
 import useFriendship from "../hooks/useFriendship";
 
 // Safe SSR check for window
 const isLocal = typeof window !== "undefined" && /localhost|127\.0\.0\.1/.test(window.location.hostname);
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || (isLocal ? "http://localhost:5000" : "");
+const API_BASE = import.meta.env.VITE_API_BASE_URL || (isLocal ? "http://localhost:5000" : "");
 
 const PROFILE_CACHE = new Map();
 
@@ -25,32 +23,26 @@ function getToken() {
 }
 
 async function fetchProfileByUsername(username) {
-  const res = await fetch(
-    `${API_BASE}/api/users/search?q=${encodeURIComponent(username)}`,
-    {
-      method: "GET",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
-      },
-    }
-  );
+  const res = await fetch(`${API_BASE}/api/users/search?q=${encodeURIComponent(username)}`, {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: getToken() ? `Bearer ${getToken()}` : undefined,
+    },
+  });
   if (!res.ok) return null;
   const data = await res.json().catch(() => ({}));
   const arr = Array.isArray(data?.users) ? data.users : Array.isArray(data) ? data : [];
-  const exact = arr.find(
-    (u) => String(u.username).toLowerCase() === String(username).toLowerCase()
-  );
+  const exact = arr.find((u) => String(u.username).toLowerCase() === String(username).toLowerCase());
   return exact || arr[0] || null;
 }
 
 export default function ProfilePage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { username: routeUsername } = useParams();
   const { user } = useAuth();
-  const { theme: viewerTheme } = useTheme(); // fixed usage
+  const { theme: viewerTheme } = useTheme();
 
   const [profileUser, setProfileUser] = useState(null);
   const [profileThemeVars, setProfileThemeVars] = useState(null);
@@ -61,16 +53,11 @@ export default function ProfilePage() {
   const isSelf = useMemo(() => {
     if (!user) return false;
     if (profileUser?._id && user._id) return String(user._id) === String(profileUser._id);
-    if (routeUsername) {
-      return String(routeUsername).toLowerCase() === String(user.username || "").toLowerCase();
-    }
+    if (routeUsername) return String(routeUsername).toLowerCase() === String(user.username || "").toLowerCase();
     return true;
   }, [user, profileUser, routeUsername]);
 
-  const displayUsername = useMemo(
-    () => routeUsername || user?.username || "user",
-    [routeUsername, user?.username]
-  );
+  const displayUsername = useMemo(() => routeUsername || user?.username || "user", [routeUsername, user?.username]);
 
   useEffect(() => {
     if (!routeUsername && user?.username) {
@@ -78,18 +65,19 @@ export default function ProfilePage() {
     }
   }, [routeUsername, user?.username, navigate]);
 
-  // --- Vercel-safe profile + theme fetch ---
+  // --- Fetch profile + safely apply theme ---
   useEffect(() => {
+    if (typeof window === "undefined") return; // client-only
     let cancelled = false;
+
     (async () => {
       const targetUsername = routeUsername || user?.username;
       if (!targetUsername) return;
       const key = String(targetUsername).toLowerCase();
 
-      // Try cache first
+      // Cache
       let profile = PROFILE_CACHE.get(key) || null;
 
-      // Fetch fresh profile regardless of cache
       const fresh = await fetchProfileByUsername(targetUsername);
       if (cancelled) return;
 
@@ -100,22 +88,26 @@ export default function ProfilePage() {
 
       if (profile) {
         setProfileUser(profile);
-        // Apply profile's theme, fallback to viewerTheme
-        setProfileThemeVars(getThemeVars(profile?.theme || viewerTheme));
+
+        // Only set theme vars after profile.theme is loaded
+        if (profile.theme) {
+          setProfileThemeVars(getThemeVars(profile.theme));
+        } else {
+          setProfileThemeVars(getThemeVars(viewerTheme));
+        }
       }
     })();
+
     return () => { cancelled = true; };
   }, [routeUsername, user, viewerTheme]);
 
   const targetId = profileUser?._id || profileUser?.id || "";
   const targetUsernameProfile = profileUser?.username || routeUsername || "";
 
-  const {
-    status,
-    busy,
-    request, cancel, accept, decline, unfriend,
-    FRIEND_STATUS: FS,
-  } = useFriendship({ userId: targetId, username: targetUsernameProfile });
+  const { status, busy, request, cancel, accept, decline, unfriend, FRIEND_STATUS: FS } = useFriendship({
+    userId: targetId,
+    username: targetUsernameProfile,
+  });
 
   async function handleAddFriend() {
     const r = await request();
