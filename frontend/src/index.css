@@ -11,26 +11,40 @@ html, body, #root {
   overflow-x: hidden; /* 🚫 prevents horizontal scroll */
 }
 
-body {
-  font-family: system-ui, sans-serif;
-  background: var(--bg-color, #fff);
-  color: var(--text-color, #000);
-  line-height: 1.5;
-  transition: background 0.3s ease, color 0.3s ease;
-}
-
-/* Layout helpers */
+/* Core defaults use variables with sensible fallbacks */
 :root {
+  /* layout */
   --max-width: 1200px;
   --padding: 1rem;
 
   /* Default theme variables (normal1) */
   --bg-color: #0b0b0b;
-  --text-color: #fff;
+  --text-color: #ffffff;
   --primary-color: #ffcc15;
   --secondary-color: #1f2937;
+  --bg-color-darker: #111111;
+  --text-color-light: #bbbbbb;
+
+  /* Panel / overlay variables */
+  --panel-bg: rgba(17,17,17,0.6);
+  --panel-bg-soft: rgba(17,17,17,0.45);
+  --action-bg: rgba(255,226,89,0.12);
+  --overlay-bg: rgba(0,0,0,0.6);
+
+  /* Accessibility / motion */
+  --focus-ring: 3px;
 }
 
+/* Base page styling */
+body {
+  font-family: system-ui, sans-serif;
+  background: var(--bg-color);
+  color: var(--text-color);
+  line-height: 1.5;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+/* Layout helpers */
 .container {
   max-width: var(--max-width);
   margin: 0 auto;
@@ -51,18 +65,44 @@ body {
 }
 
 /* Theme overrides using data-theme on <html> */
+
 html[data-theme="light"] {
   --bg-color: #ffffff;
   --text-color: #111827;
   --primary-color: #2563eb;
   --secondary-color: #e5e7eb;
+  --bg-color-darker: #f3f4f6;
+  --text-color-light: #6b7280;
+  --panel-bg: rgba(255,255,255,0.7);
+  --panel-bg-soft: rgba(245,245,245,0.85);
+  --action-bg: rgba(37,99,235,0.08);
+  --overlay-bg: rgba(0,0,0,0.5);
 }
 
 html[data-theme="normal1"] {
   --bg-color: #0b0b0b;
-  --text-color: #fff;
+  --text-color: #ffffff;
   --primary-color: #ffcc15;
   --secondary-color: #1f2937;
+  --bg-color-darker: #111111;
+  --text-color-light: #bbbbbb;
+  --panel-bg: rgba(17,17,17,0.6);
+  --panel-bg-soft: rgba(17,17,17,0.45);
+  --action-bg: rgba(255,226,89,0.12);
+  --overlay-bg: rgba(0,0,0,0.6);
+}
+
+html[data-theme="normal2"] {
+  --bg-color: #111111;
+  --text-color: #ffdd88;
+  --primary-color: #ffcc00;
+  --secondary-color: #2b2b2b;
+  --bg-color-darker: #161616;
+  --text-color-light: #d0c6a0;
+  --panel-bg: rgba(20,20,20,0.6);
+  --panel-bg-soft: rgba(20,20,20,0.45);
+  --action-bg: rgba(255,204,0,0.10);
+  --overlay-bg: rgba(0,0,0,0.6);
 }
 
 html[data-theme="dark"] {
@@ -70,13 +110,29 @@ html[data-theme="dark"] {
   --text-color: #f8fafc;
   --primary-color: #60a5fa;
   --secondary-color: #1e293b;
+  --bg-color-darker: #1a2533;
+  --text-color-light: #aab4bf;
+  --panel-bg: rgba(15,23,36,0.6);
+  --panel-bg-soft: rgba(15,23,36,0.45);
+  --action-bg: rgba(96,165,250,0.08);
+  --overlay-bg: rgba(0,0,0,0.6);
 }
 
-/* Example usage of variables */
-body {
-  background: var(--bg-color);
-  color: var(--text-color);
+html[data-theme="custom"] {
+  /* Example custom theme — adjust as needed */
+  --bg-color: #121212;
+  --text-color: #00ffd6;
+  --primary-color: #00ccff;
+  --secondary-color: #0e0e0e;
+  --bg-color-darker: #1e1e1e;
+  --text-color-light: #66fff0;
+  --panel-bg: rgba(18,18,18,0.7);
+  --panel-bg-soft: rgba(18,18,18,0.5);
+  --action-bg: rgba(0,204,255,0.06);
+  --overlay-bg: rgba(0,0,0,0.65);
 }
+
+/* Utility and default component styling that uses variables */
 
 a {
   color: var(--primary-color);
@@ -88,10 +144,27 @@ button {
   color: var(--text-color);
   border: none;
   cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
 }
 
 button:focus {
-  outline: 2px solid var(--primary-color);
+  outline: none;
+  box-shadow: 0 0 0 var(--focus-ring) rgba(255,204,21,0.12);
   outline-offset: 2px;
-  box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.12);
 }
+
+/* Ensure components that depend on var() get consistent defaults */
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--secondary-color);
+  color: var(--text-color);
+}
+
+/* Small helpers */
+.muted {
+  color: var(--text-color-light);
+}
+
+/* Keep your existing reset & layout rules if you want more below... */

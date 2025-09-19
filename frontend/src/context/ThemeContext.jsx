@@ -1,4 +1,3 @@
-// frontend/src/context/ThemeContext.jsx
 import React, {
   createContext,
   useContext,
@@ -60,6 +59,28 @@ const THEME_VARS = {
 
 const normalize = (t) => (THEMES.includes(t) ? t : DEFAULT);
 
+/* ---------------------- Public helpers ---------------------- */
+export function getThemeVars(theme) {
+  return THEME_VARS[theme] || THEME_VARS[DEFAULT];
+}
+
+/**
+ * Apply a theme to the DOM.
+ * @param {string} theme Theme name
+ */
+export function applyTheme(theme) {
+  const t = normalize(theme);
+  const root = document.documentElement;
+  root.setAttribute("data-theme", t);
+  THEMES.forEach((th) => root.classList.toggle(`theme-${th}`, th === t));
+
+  const vars = THEME_VARS[t] || THEME_VARS[DEFAULT];
+  Object.entries(vars).forEach(([key, value]) => {
+    root.style.setProperty(key, value);
+  });
+}
+
+/* ---------------------- Internal helpers ---------------------- */
 function getToken() {
   const keys = ["authToken", "token", "jwt", "accessToken"];
   for (const k of keys) {
@@ -101,18 +122,6 @@ function loadTheme(uid) {
   return (key && localStorage.getItem(key)) || localStorage.getItem("nsz_theme:last_theme") || DEFAULT;
 }
 
-function applyThemeToDOM(theme) {
-  const root = document.documentElement;
-  root.setAttribute("data-theme", theme);
-  THEMES.forEach((t) => root.classList.toggle(`theme-${t}`, t === theme));
-
-  // Apply CSS variables globally
-  const vars = THEME_VARS[theme] || THEME_VARS[DEFAULT];
-  Object.entries(vars).forEach(([key, value]) => {
-    root.style.setProperty(key, value);
-  });
-}
-
 async function fetchMe() {
   const token = getToken();
   if (!token) return null;
@@ -141,19 +150,17 @@ async function saveThemeServer(theme) {
   }
 }
 
+/* ---------------------- Provider ---------------------- */
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(DEFAULT);
   const [userId, setUserId] = useState(null);
   const [ready, setReady] = useState(false);
-  const { updateUser } = useAuth();
   const hydrated = useRef(false);
 
-  // Apply theme immediately to DOM
   useLayoutEffect(() => {
-    applyThemeToDOM(theme);
+    applyTheme(theme);
   }, [theme]);
 
-  // Hydrate user and theme on mount
   useEffect(() => {
     const hydrate = async () => {
       const token = getToken();
@@ -179,7 +186,6 @@ export function ThemeProvider({ children }) {
     hydrate();
   }, []);
 
-  // Save theme when it changes
   useEffect(() => {
     if (!hydrated.current || !userId) return;
 

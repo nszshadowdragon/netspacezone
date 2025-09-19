@@ -1,4 +1,3 @@
-// backend/routes/users.js
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const path = require('path');
@@ -19,8 +18,13 @@ try {
 } catch {}
 
 /* ---------------- helpers ---------------- */
-const ALLOWED_THEMES = new Set(['light', 'normal1', 'normal2', 'dark']);
-const sanitizeTheme = (t) => (ALLOWED_THEMES.has(String(t)) ? String(t) : null);
+// include 'custom' so frontend can persist that value too
+const ALLOWED_THEMES = new Set(['light', 'normal1', 'normal2', 'dark', 'custom']);
+const sanitizeTheme = (t) => {
+  if (!t && t !== "") return null;
+  const s = String(t).trim();
+  return ALLOWED_THEMES.has(s) ? s : null;
+};
 const escapeRx = (s='') => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function normalizeUploadsPath(raw) {
@@ -94,6 +98,30 @@ router.get('/me', requireAuth, async (req, res) => {
     res.json(user);
   } catch (err) {
     console.error('/api/users/me GET error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * PUT /api/users/theme
+ * Lightweight endpoint to update only the theme preference.
+ * Accepts: { theme: 'dark' }
+ * Returns: { theme: 'dark' }
+ */
+router.put('/theme', requireAuth, async (req, res) => {
+  try {
+    const id = req.userId || req.user?._id || req.user?.id;
+    if (!id) return res.status(401).json({ error: 'Not authenticated' });
+
+    const theme = sanitizeTheme(req.body?.theme);
+    if (!theme) return res.status(400).json({ error: 'Invalid theme' });
+
+    const user = await User.findByIdAndUpdate(id, { $set: { theme } }, { new: true, runValidators: true }).select('-password -securityAnswer');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    return res.json({ theme: user.theme });
+  } catch (err) {
+    console.error('/api/users/theme PUT error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

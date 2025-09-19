@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { useTheme } from "../context/ThemeContext"; // <-- import theme
+import { useTheme, getThemeVars } from "../context/ThemeContext";
 import ImageGallery from "../components/ImageGallery";
 import AvatarImg from "../components/AvatarImg";
 import useFriendship from "../hooks/useFriendship";
@@ -48,9 +48,10 @@ export default function ProfilePage() {
   const location = useLocation();
   const { username: routeUsername } = useParams();
   const { user } = useAuth();
-  const { theme } = useTheme(); // <-- get theme
+  const { theme: viewerTheme } = useTheme();
 
   const [profileUser, setProfileUser] = useState(null);
+  const [profileThemeVars, setProfileThemeVars] = useState(null); // <- new: holds CSS vars for profile owner
   const [toast, setToast] = useState("");
   const [confirmUnfriendOpen, setConfirmUnfriendOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -86,10 +87,14 @@ export default function ProfilePage() {
       const key = String(targetUsername).toLowerCase();
 
       if (PROFILE_CACHE.has(key)) {
-        setProfileUser(PROFILE_CACHE.get(key));
+        const cached = PROFILE_CACHE.get(key);
+        setProfileUser(cached);
+        // Apply profile theme vars from cache
+        setProfileThemeVars(getThemeVars(cached?.theme || viewerTheme));
       } else if (routeUsername && user?.username && routeUsername === user.username) {
         PROFILE_CACHE.set(key, user);
         setProfileUser(user);
+        setProfileThemeVars(getThemeVars(user?.theme || viewerTheme));
       }
 
       const fresh = await fetchProfileByUsername(targetUsername);
@@ -97,12 +102,13 @@ export default function ProfilePage() {
       if (fresh) {
         PROFILE_CACHE.set(key, fresh);
         setProfileUser(fresh);
+        setProfileThemeVars(getThemeVars(fresh?.theme || viewerTheme));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [routeUsername, user]);
+  }, [routeUsername, user, viewerTheme]);
 
   const targetId = profileUser?._id || profileUser?.id || "";
   const targetUsernameProfile = profileUser?.username || routeUsername || "";
@@ -153,10 +159,14 @@ export default function ProfilePage() {
         position: "relative",
         background: "var(--bg-color)",
         color: "var(--text-color)",
+        minHeight: "100vh",
+        width: "100vw",
+        // apply profile owner's CSS variables locally if available
+        ...(profileThemeVars || {}),
       }}
       key={routeUsername || user?.username}
-      data-theme={theme} // <-- apply current theme
     >
+      {/* subtle background watermark */}
       <div
         style={{
           position: "absolute",
@@ -169,37 +179,90 @@ export default function ProfilePage() {
       />
 
       <style>{`
+        /* Profile page uses theme CSS variables set on :root by ThemeContext,
+           but we also allow overriding them locally via inline style (profileThemeVars) */
         .profile-page { min-height:100vh; width:100vw; background: var(--bg-color); color: var(--text-color); }
         .pp-container { position:relative; z-index:1; padding:2rem; max-width:1100px; margin:0 auto; }
         @media (max-width: 680px){ .pp-container{ padding:1rem; } }
-        .pp-header { display:flex; gap:1rem; justify-content:space-between; align-items:flex-start; padding:1.25rem; margin-bottom:2rem; border:1px solid var(--primary-color); border-radius:8px; background: rgba(17,17,17,.6); }
+
+        /* Panels use panel variables so theme can customize them */
+        .pp-header {
+          display:flex;
+          gap:1rem;
+          justify-content:space-between;
+          align-items:flex-start;
+          padding:1.25rem;
+          margin-bottom:2rem;
+          border:1px solid var(--primary-color);
+          border-radius:8px;
+          background: var(--panel-bg, rgba(17,17,17,.6));
+        }
+
         .pp-left{ flex:1; }
         .pp-center{ flex:1; text-align:center; }
         .pp-right{ flex:1; text-align:right; }
+
         .pp-actions{ margin-top:.8rem; display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
         .pp-username{ margin:0; font-size:clamp(20px,3.2vw,28px); }
         .pp-main{ display:flex; gap:2rem; }
         .pp-col-left{ flex:2; }
         .pp-col-right{ flex:1; }
-        @media (max-width: 900px){ .pp-header{ flex-direction:column; align-items:center; text-align:center; } .pp-right{ text-align:center; } .pp-actions{ justify-content:center; } .pp-main{ flex-direction:column; } }
-        .section{ margin-bottom:2rem; padding:1rem; border-radius:8px; border:1px solid var(--primary-color); background: rgba(17,17,17,.5); }
+
+        @media (max-width: 900px){
+          .pp-header{ flex-direction:column; align-items:center; text-align:center; }
+          .pp-right{ text-align:center; }
+          .pp-actions{ justify-content:center; }
+          .pp-main{ flex-direction:column; }
+        }
+
+        .section{
+          margin-bottom:2rem;
+          padding:1rem;
+          border-radius:8px;
+          border:1px solid var(--primary-color);
+          background: var(--panel-bg-soft, rgba(17,17,17,.5));
+        }
+
         .pp-btn{ border:none; padding:.45rem .85rem; border-radius:6px; cursor:pointer; font-weight:700; }
         .pp-btn.gold{ background: var(--primary-color); color: var(--bg-color); }
-        .pp-btn.action{ border:1px solid var(--primary-color); background:rgba(255,226,89,.2); color:var(--text-color); }
+        .pp-btn.action{
+          border:1px solid var(--primary-color);
+          background: var(--action-bg, rgba(255,226,89,.12));
+          color: var(--text-color);
+        }
         .pp-btn[disabled]{ opacity:.55; cursor:not-allowed; }
-        textarea.pp-input{ width:100%; padding:.5rem; border-radius:6px; background:transparent; border:1px solid var(--primary-color); color:var(--text-color); }
-        .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; z-index:50; }
-        .modal{ background: var(--bg-color-darker, #111); border:1px solid var(--primary-color); border-radius:10px; padding:1rem; width:min(420px,92vw); box-shadow:0 0 18px rgba(255,226,89,.15); }
+
+        textarea.pp-input{
+          width:100%;
+          padding:.5rem;
+          border-radius:6px;
+          background:transparent;
+          border:1px solid var(--primary-color);
+          color:var(--text-color);
+        }
+
+        .overlay{ position:fixed; inset:0; background:var(--overlay-bg, rgba(0,0,0,.6)); display:flex; align-items:center; justify-content:center; z-index:50; }
+        .modal{
+          background: var(--bg-color-darker, #111);
+          border:1px solid var(--primary-color);
+          border-radius:10px;
+          padding:1rem;
+          width:min(420px,92vw);
+          box-shadow:0 0 18px rgba(0,0,0,.25);
+        }
         .modal-actions{ display:flex; gap:.5rem; justify-content:flex-end; }
-        .pp-toast{ font-size:12px; color:var(--text-color); min-height:18px; margin-left:.25rem; }
+        .pp-toast{ font-size:12px; color:var(--text-color-light, #bbb); min-height:18px; margin-left:.25rem; }
+
+        /* small helpers */
+        .muted { color: var(--text-color-light, #bbb); }
       `}</style>
 
       <div className="pp-container">
         <div className="pp-header">
           <div className="pp-left">
             <h3 style={{ marginBottom: ".5rem" }}>Favorite Quote</h3>
-            <p>“Where connection meets cosmos.”</p>
-            <small style={{ display: "block", marginTop: "1rem" }}>
+            <p className="muted">“Where connection meets cosmos.”</p>
+            <small style={{ display: "block", marginTop: "1rem" }} className="muted">
               123 Friends • 56 Posts • 900 Likes
             </small>
 
@@ -263,8 +326,8 @@ export default function ProfilePage() {
               </button>
             </div>
             <h3 style={{ marginBottom: ".5rem" }}>Highlights</h3>
-            <p><strong>Featured In:</strong> Top Creators</p>
-            <p><strong>Achievements:</strong> 1000+ Likes • Creator of the Month</p>
+            <p className="muted"><strong>Featured In:</strong> Top Creators</p>
+            <p className="muted"><strong>Achievements:</strong> 1000+ Likes • Creator of the Month</p>
           </div>
         </div>
 
@@ -274,6 +337,7 @@ export default function ProfilePage() {
               <textarea
                 className="pp-input"
                 placeholder="What's on your mind?"
+                aria-label="Create post"
               />
               <button className="pp-btn gold" style={{ marginTop: ".5rem" }}>
                 Post
@@ -285,7 +349,7 @@ export default function ProfilePage() {
               {profileUser ? (
                 <ImageGallery ownerId={profileUser._id} canEdit={isSelf} />
               ) : (
-                <div style={{ color: "var(--text-color-light, #bbb)" }}>Loading profile…</div>
+                <div className="muted">Loading profile…</div>
               )}
             </div>
           </div>
@@ -302,7 +366,7 @@ export default function ProfilePage() {
         <div className="overlay" role="dialog" aria-modal="true" aria-label="Unfriend confirmation">
           <div className="modal">
             <h3>Unfriend @{displayUsername}?</h3>
-            <p style={{ color: "var(--text-color-light, #ddd)", marginTop: 0 }}>
+            <p className="muted" style={{ marginTop: 0 }}>
               You can add them again later. This action won’t delete messages.
             </p>
             <div className="modal-actions">

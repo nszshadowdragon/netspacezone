@@ -1,5 +1,8 @@
+// models/User.js
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
+
+const THEMES = ["light", "normal1", "normal2", "dark", "custom"];
 
 const userSchema = new mongoose.Schema(
   {
@@ -7,17 +10,20 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true },
     password: { type: String, required: true },
 
-    // ✅ All required fields
+    // required profile fields
     firstName: { type: String, required: true },
     lastName: { type: String, required: true },
     birthday: { type: Date, required: true },
 
-    // ✅ Profile picture must exist (base64 string)
+    // profile picture (base64 string or url)
     profilePic: { type: String, required: true },
 
-    // ✅ Optional extras
+    // optional extras
     referral: { type: String, default: "" },
     interests: { type: [String], default: [] },
+
+    // new: theme preference (persisted per user)
+    theme: { type: String, enum: THEMES, default: "normal1" },
   },
   { timestamps: true }
 );
