@@ -5,7 +5,7 @@ import SearchBar from "./SearchBar";
 import { useAuth } from "../context/AuthContext";
 import NotificationBell from "./NotificationBell";
 import NotificationsPopup from "./NotificationsPopup";
-import ThemeSelector from "./ThemeSelector";
+import themeSelector from "./themeSelector";
 
 /* --------------------- helpers --------------------- */
 function isLocalhost() {
@@ -224,7 +224,7 @@ export default function Navbar({ unreadCount = 0 }) {
         <div className="nsz-search" style={{ width: "100%" }}><SearchBar /></div>
 
         <div className="nsz-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <ThemeSelector />
+          <themeSelector />
           <NotificationBell className="nb-anchor" onViewAll={() => setShowAllPopup(true)} />
           <Link
             to={profilePath}
