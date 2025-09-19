@@ -1,14 +1,14 @@
-// frontend/src/components/NotificationBell.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FaBell, FaCheck, FaTimes, FaUndoAlt, FaSpinner } from "react-icons/fa";
+import { useNotifications } from "../context/NotificationContext";
 import { useAuth } from "../context/AuthContext";
 import { useFriends } from "../context/FriendsContext";
 import useFriendship from "../hooks/useFriendship";
 import FriendsAPI from "../services/friends";
 import AvatarImg from "./AvatarImg";
-import socket from "../socket";
+import socket from "../socket"; // ✅ realtime
 
-/* ---------- helpers ---------- */
+/* -------------------- helpers -------------------- */
 function timeAgo(d) {
   try {
     const date = typeof d === "string" ? new Date(d) : d;
@@ -30,8 +30,7 @@ function getProfileImageSrc(src) {
   if (src.startsWith("http")) return src;
   if (src.startsWith("/uploads")) {
     const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
-    const base =
-      import.meta?.env?.VITE_API_BASE_URL || (isLocal ? "http://localhost:5000" : "");
+    const base = import.meta?.env?.VITE_API_BASE_URL || (isLocal ? "http://localhost:5000" : "");
     return `${(base || "").replace(/\/$/, "")}${src}`;
   }
   return src;
@@ -40,12 +39,8 @@ function useOutsideClose(open, onClose) {
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
-    function onDoc(e) {
-      if (ref.current && !ref.current.contains(e.target)) onClose?.();
-    }
-    function onKey(e) {
-      if (e.key === "Escape") onClose?.();
-    }
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) onClose?.(); }
+    function onKey(e) { if (e.key === "Escape") onClose?.(); }
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -56,7 +51,7 @@ function useOutsideClose(open, onClose) {
   return ref;
 }
 
-/* ---------- request lists (Requests tab) ---------- */
+/* ---------------- mini fetch for requests ---------------- */
 function useRequestLists(open, tab) {
   const [incoming, setIncoming] = useState([]);
   const [outgoing, setOutgoing] = useState([]);
@@ -84,20 +79,17 @@ function useRequestLists(open, tab) {
     }
   }, [open, tab]);
 
-  useEffect(() => {
-    reload();
-  }, [reload]);
+  useEffect(() => { reload(); }, [reload]);
 
   return { incoming, setIncoming, outgoing, setOutgoing, loading, err, reload };
 }
 
-/* ---------- shared RequestRow ---------- */
+/* ---------------- shared request row ---------------- */
 function RequestRow({ item, mode, onDone }) {
+  // Robustly extract "other" user identity
   const u =
     item.user ||
-    (mode === "incoming"
-      ? item.fromUser || item.from || item.sender
-      : item.toUser || item.to || item.receiver) ||
+    (mode === "incoming" ? item.fromUser || item.from || item.sender : item.toUser || item.to || item.receiver) ||
     {};
   const otherId =
     (mode === "incoming"
@@ -109,78 +101,34 @@ function RequestRow({ item, mode, onDone }) {
   const otherUsername =
     item.username || u.username || item.fromUsername || item.toUsername || "";
 
-  const { busy, accept, decline, cancel } = useFriendship({
-    userId: otherId,
-    username: otherUsername,
-  });
-
-  // Local broadcast (ProfilePage/useFriendship listens)
-  const broadcast = (type, id) => {
-    try {
-      window.dispatchEvent(new CustomEvent("nsz:friend", { detail: { type, otherId: id } }));
-    } catch {}
-    try {
-      if ("BroadcastChannel" in window) {
-        const bc = new BroadcastChannel("nsz:friend");
-        bc.postMessage({ type, otherId: id });
-        bc.close();
-      }
-    } catch {}
-  };
+  const {
+    busy,
+    accept,
+    decline,
+    cancel,
+  } = useFriendship({ userId: otherId, username: otherUsername });
 
   return (
     <div className="nb-row">
       <div className="nb-rowL">
-        <AvatarImg
-          user={{ _id: otherId, username: otherUsername, profileImage: u.profileImage }}
-          size={36}
-        />
+        <AvatarImg user={{ _id: otherId, username: otherUsername, profileImage: u.profileImage }} size={36} />
         <div className="nb-rowUser">
           <div className="nb-name">@{otherUsername || "user"}</div>
-          <div className="nb-sub">
-            {mode === "incoming" ? "sent you a request" : "you sent a request"}
-          </div>
+          <div className="nb-sub">{mode === "incoming" ? "sent you a request" : "you sent a request"}</div>
         </div>
       </div>
       <div className="nb-rowR">
         {mode === "incoming" ? (
           <>
-            <button
-              className="nb-btn gold"
-              disabled={busy}
-              onClick={async () => {
-                broadcast("accepted", otherId);
-                onDone?.(otherId, "accept");
-                await accept();
-              }}
-              title="Accept"
-            >
+            <button className="nb-btn gold" disabled={busy} onClick={async () => { const r = await accept(); if (r.ok) onDone?.(); }} title="Accept">
               {busy ? <FaSpinner className="spin" /> : <FaCheck />}
             </button>
-            <button
-              className="nb-btn"
-              disabled={busy}
-              onClick={async () => {
-                broadcast("declined", otherId);
-                onDone?.(otherId, "decline");
-                await decline();
-              }}
-              title="Decline"
-            >
+            <button className="nb-btn" disabled={busy} onClick={async () => { const r = await decline(); if (r.ok) onDone?.(); }} title="Decline">
               {busy ? <FaSpinner className="spin" /> : <FaTimes />}
             </button>
           </>
         ) : (
-          <button
-            className="nb-btn"
-            disabled={busy}
-            onClick={async () => {
-              broadcast("canceled", otherId);
-              onDone?.(otherId, "cancel");
-              await cancel();
-            }}
-            title="Cancel"
-          >
+          <button className="nb-btn" disabled={busy} onClick={async () => { const r = await cancel(); if (r.ok) onDone?.(); }} title="Cancel">
             {busy ? <FaSpinner className="spin" /> : <FaUndoAlt />}
           </button>
         )}
@@ -189,63 +137,53 @@ function RequestRow({ item, mode, onDone }) {
   );
 }
 
-/* ---------- main bell ---------- */
+/* ---------------- main bell ---------------- */
 export default function NotificationBell({ className, onViewAll }) {
   const { user, loading: authLoading } = useAuth();
 
-  // Counts / Requests tab (from Friends context)
-  const { counts, refreshCounts, setCounts } = useFriends();
+  // Notifications (All tab)
+  const {
+    notifications,
+    unreadCount,
+    fetchNotifications,
+    markOneRead,
+    markAllRead,
+    removeNotification,
+  } = useNotifications();
+
+  // Friends counts (Requests tab + badge)
+  const { counts, refreshCounts } = useFriends();
 
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState("all");
-  const [reqTab, setReqTab] = useState("incoming");
-
+  const [tab, setTab] = useState("all"); // 'all' | 'requests'
+  const [reqTab, setReqTab] = useState("incoming"); // 'incoming' | 'outgoing'
+  const [loadingList, setLoadingList] = useState(false);
   const wrapRef = useOutsideClose(open, () => setOpen(false));
 
-  const {
-    incoming,
-    setIncoming,
-    outgoing,
-    setOutgoing,
-    loading: reqLoading,
-    err: reqErr,
-    reload,
-} = useRequestLists(open && tab === "requests", reqTab);
+  const { incoming, setIncoming, outgoing, setOutgoing, loading: reqLoading, err: reqErr, reload } =
+    useRequestLists(open && tab === "requests", reqTab);
 
-  // ---------- "All" tab uses incoming requests as notifications ----------
-  const [allIncoming, setAllIncoming] = useState([]);
-  const [allIncomingLoading, setAllIncomingLoading] = useState(false);
-  const [dismissedIds, setDismissedIds] = useState(() => new Set()); // local "mark read"
+  // BADGE = unread notifications + incoming requests
+  const totalBadge = Math.max(0, Number(unreadCount || 0) + Number(counts?.incoming || 0));
 
-  const loadAllIncoming = useCallback(async () => {
-    setAllIncomingLoading(true);
-    try {
-      const r = await FriendsAPI.listIncoming();
-      if (r.ok) setAllIncoming(Array.isArray(r.data) ? r.data : r.data?.results || []);
-    } finally {
-      setAllIncomingLoading(false);
-    }
-  }, []);
-
-  // Fetch when panel opens
+  // Throttle All-tab fetches to stop flicker (1.2s window)
   const lastFetchRef = useRef(0);
-  const maybeFetchAll = useCallback(
-    async (force = false) => {
-      const now = Date.now();
-      if (!force && now - lastFetchRef.current < 800) return;
-      lastFetchRef.current = now;
-      await Promise.all([refreshCounts(), loadAllIncoming()]);
-    },
-    [refreshCounts, loadAllIncoming]
-  );
+  const maybeFetchAll = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastFetchRef.current < 1200) return;
+    lastFetchRef.current = now;
+    setLoadingList(true);
+    try { await fetchNotifications(); } finally { setLoadingList(false); }
+  }, [fetchNotifications]);
 
+  // Always fetch when opening the panel on All tab (throttled)
   useEffect(() => {
     if (!authLoading && user && open && tab === "all") {
       maybeFetchAll(true);
     }
   }, [authLoading, user, open, tab, maybeFetchAll]);
 
-  // Socket counts refresh
+  // Friend events → refresh counts, and if All is open, fetch (throttled)
   useEffect(() => {
     const bump = () => {
       refreshCounts();
@@ -265,43 +203,9 @@ export default function NotificationBell({ className, onViewAll }) {
     };
   }, [open, tab, refreshCounts, maybeFetchAll]);
 
-  // Badge = incoming requests minus locally dismissed "reads"
-  const effectiveIncoming = Math.max(
-    0,
-    Number(counts?.incoming || 0) - Number(dismissedIds.size || 0)
-  );
-  const totalBadge = effectiveIncoming;
-
+  // helpers
   const currentList = reqTab === "incoming" ? incoming : outgoing;
   const setCurrentList = reqTab === "incoming" ? setIncoming : setOutgoing;
-
-  const adjCounts = useCallback(
-    (delta) => {
-      setCounts?.((prev) => ({
-        incoming: Math.max(0, (prev?.incoming || 0) + (delta.incoming || 0)),
-        outgoing: Math.max(0, (prev?.outgoing || 0) + (delta.outgoing || 0)),
-        friends: Math.max(0, (prev?.friends || 0) + (delta.friends || 0)),
-      }));
-    },
-    [setCounts]
-  );
-
-  const markAllReadLocal = () => {
-    try {
-      const ids = new Set(dismissedIds);
-      // Treat all current incoming items as "read" locally for badge purposes
-      allIncoming.forEach((row) => {
-        const id =
-          (row.fromUser && (row.fromUser._id || row.fromUser.id)) ||
-          row.fromUserId ||
-          row.userId ||
-          row.from ||
-          "";
-        if (id) ids.add(String(id));
-      });
-      setDismissedIds(ids);
-    } catch {}
-  };
 
   return (
     <div ref={wrapRef} className={className} style={{ position: "relative" }}>
@@ -311,28 +215,17 @@ export default function NotificationBell({ className, onViewAll }) {
         className="nb-bell"
       >
         <FaBell />
-        {totalBadge > 0 && (
-          <span className="nb-badge">{totalBadge > 99 ? "99+" : totalBadge}</span>
-        )}
+        {totalBadge > 0 && <span className="nb-badge">{totalBadge > 99 ? "99+" : totalBadge}</span>}
       </button>
 
       {open && (
         <div className="nb-panel">
-          {/* Tabs */}
+          {/* Tabs header */}
           <div className="nb-tabs">
-            <button
-              className={`nb-tab ${tab === "all" ? "active" : ""}`}
-              onClick={() => setTab("all")}
-            >
+            <button className={`nb-tab ${tab === "all" ? "active" : ""}`} onClick={() => setTab("all")}>
               All
             </button>
-            <button
-              className={`nb-tab ${tab === "requests" ? "active" : ""}`}
-              onClick={() => {
-                setTab("requests");
-                reload();
-              }}
-            >
+            <button className={`nb-tab ${tab === "requests" ? "active" : ""}`} onClick={() => { setTab("requests"); reload(); }}>
               Requests{counts?.incoming ? ` (${counts.incoming})` : ""}
             </button>
             <div className="nb-spacer" />
@@ -346,8 +239,9 @@ export default function NotificationBell({ className, onViewAll }) {
                   Refresh
                 </button>
                 <button
-                  onClick={markAllReadLocal}
-                  className="nb-ctrl"
+                  onClick={markAllRead}
+                  className={`nb-ctrl ${unreadCount === 0 ? "disabled" : ""}`}
+                  disabled={unreadCount === 0}
                   title="Mark all read"
                 >
                   Mark all read
@@ -363,79 +257,91 @@ export default function NotificationBell({ className, onViewAll }) {
           {/* Body */}
           {tab === "all" ? (
             <div className="nb-body">
-              {/* Incoming requests rendered as notifications */}
-              {allIncomingLoading && (
-                <div className="nb-empty">
-                  <FaSpinner className="spin" /> Loading…
-                </div>
-              )}
-              {!allIncomingLoading && allIncoming.length === 0 && (
+              {notifications.length === 0 && !loadingList && (
                 <div className="nb-empty">No notifications yet.</div>
               )}
-              {!allIncomingLoading && allIncoming.length > 0 && (
-                <div className="nb-list" style={{ padding: "8px" }}>
-                  {allIncoming.map((row, i) => (
-                    <div key={i} style={{ padding: "0 0 0" }}>
+
+              {notifications.map((n) => {
+                // ✅ Use the same RequestRow style for friend requests in "All"
+                if (n.type === "friend_request") {
+                  const item = {
+                    fromUserId: n?.actor?._id || "",
+                    fromUser: n?.actor ? {
+                      _id: n.actor._id,
+                      username: n.actor.username,
+                      profileImage: n.actor.profileImage
+                    } : null,
+                    createdAt: n.createdAt
+                  };
+                  return (
+                    <div key={n._id} style={{ padding: "8px 8px 0" }}>
                       <RequestRow
-                        item={row}
+                        item={item}
                         mode="incoming"
-                        onDone={(actorId, action) => {
-                          // Remove from All, sync counts
-                          setAllIncoming((curr) =>
-                            curr.filter((r) =>
-                              String(
-                                (r.fromUser && (r.fromUser._id || r.fromUser.id)) ||
-                                  r.fromUserId ||
-                                  r.userId ||
-                                  r.from ||
-                                  ""
-                              ) !== String(actorId || "")
-                            )
-                          );
-                          // Clear local badge for this actor
-                          setDismissedIds((ids) => {
-                            const next = new Set(ids);
-                            next.add(String(actorId || ""));
-                            return next;
-                          });
-                          if (action === "accept") adjCounts({ incoming: -1, friends: +1 });
-                          else if (action === "decline") adjCounts({ incoming: -1 });
-                          refreshCounts();
+                        onDone={() => {
+                          markOneRead(n._id);
+                          removeNotification?.(n._id);
                         }}
                       />
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                }
+
+                // default rendering (other types)
+                return (
+                  <div
+                    key={n._id}
+                    className={`nb-item ${n.read ? "read" : "unread"}`}
+                  >
+                    <img
+                      src={getProfileImageSrc(n?.actor?.profileImage || n?.fromProfileImage)}
+                      alt={n?.actor?.username || "user"}
+                      className="nb-avatar"
+                    />
+                    <div className="nb-content">
+                      <div className="nb-line">
+                        <strong>@{n?.actor?.username || "Someone"}</strong>{" "}
+                        <span>{String(n.message || "").replace(n?.actor?.username || "", "").trim()}</span>
+                      </div>
+
+                      {n.link && (
+                        <a href={n.link} onClick={() => setOpen(false)} className="nb-link">
+                          View
+                        </a>
+                      )}
+
+                      <div className="nb-time">{timeAgo(n.createdAt)}</div>
+                    </div>
+
+                    {!n.read && (
+                      <button onClick={() => markOneRead(n._id)} className="nb-mark">
+                        Mark read
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className="nb-footer">
+                <button onClick={onViewAll} className="nb-viewall">View All</button>
+              </div>
             </div>
           ) : (
-            // ---------- Requests tab ----------
             <div className="nb-body">
+              {/* Requests sub-tabs */}
               <div className="nb-reqTabs">
-                <button
-                  className={`nb-reqTab ${reqTab === "incoming" ? "active" : ""}`}
-                  onClick={() => setReqTab("incoming")}
-                >
+                <button className={`nb-reqTab ${reqTab === "incoming" ? "active" : ""}`} onClick={() => setReqTab("incoming")}>
                   Incoming{counts?.incoming ? ` (${counts.incoming})` : ""}
                 </button>
-                <button
-                  className={`nb-reqTab ${reqTab === "outgoing" ? "active" : ""}`}
-                  onClick={() => setReqTab("outgoing")}
-                >
+                <button className={`nb-reqTab ${reqTab === "outgoing" ? "active" : ""}`} onClick={() => setReqTab("outgoing")}>
                   Sent{counts?.outgoing ? ` (${counts.outgoing})` : ""}
                 </button>
               </div>
 
-              {reqLoading && (
-                <div className="nb-empty">
-                  <FaSpinner className="spin" /> Loading…
-                </div>
-              )}
+              {reqLoading && <div className="nb-empty"><FaSpinner className="spin" /> Loading…</div>}
               {!reqLoading && reqErr && <div className="nb-empty">Error: {reqErr}</div>}
               {!reqLoading && !reqErr && currentList.length === 0 && (
-                <div className="nb-empty">
-                  No {reqTab === "incoming" ? "incoming" : "sent"} requests.
-                </div>
+                <div className="nb-empty">No {reqTab === "incoming" ? "incoming" : "sent"} requests.</div>
               )}
 
               {!reqLoading && !reqErr && currentList.length > 0 && (
@@ -445,35 +351,13 @@ export default function NotificationBell({ className, onViewAll }) {
                       key={i}
                       item={item}
                       mode={reqTab}
-                      onDone={(actorId, action) => {
+                      onDone={() => {
+                        // remove row locally and refresh counts
                         setCurrentList((curr) => {
                           const next = curr.slice();
                           next.splice(i, 1);
                           return next;
                         });
-                        // Also clear from "All" view & local badge
-                        setAllIncoming((curr) =>
-                          curr.filter((r) =>
-                            String(
-                              (r.fromUser && (r.fromUser._id || r.fromUser.id)) ||
-                                r.fromUserId ||
-                                r.userId ||
-                                r.from ||
-                                ""
-                            ) !== String(actorId || "")
-                          )
-                        );
-                        setDismissedIds((ids) => {
-                          const next = new Set(ids);
-                          next.add(String(actorId || ""));
-                          return next;
-                        });
-                        if (reqTab === "incoming") {
-                          if (action === "accept") adjCounts({ incoming: -1, friends: +1 });
-                          else if (action === "decline") adjCounts({ incoming: -1 });
-                        } else if (reqTab === "outgoing" && action === "cancel") {
-                          adjCounts({ outgoing: -1 });
-                        }
                         refreshCounts();
                       }}
                     />
@@ -487,17 +371,56 @@ export default function NotificationBell({ className, onViewAll }) {
 
       {/* styles */}
       <style>{`
-        .nb-bell{ position:relative; display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px; border-radius:10px; border:1px solid #2b2b2b; background:#141414; color:#ffe066; cursor:pointer; }
-        .nb-badge{ position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 5px; border-radius:999px; background:#ff4d4f; color:#fff; font-size:11px; display:inline-flex; align-items:center; justify-content:center; border:1px solid #400; }
-        .nb-panel{ position:absolute; right:0; top:calc(100% + 8px); width:min(420px, 92vw); max-height:70vh; overflow:hidden; z-index:1000; background:#0f0f0f; border:1px solid #2a2a2a; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5); }
-        .nb-tabs{ display:flex; align-items:center; gap:6px; padding:8px; border-bottom:1px solid #222; background:linear-gradient(180deg, rgba(255,224,102,.06), transparent); }
-        .nb-tab{ padding:6px 10px; border-radius:8px; border:1px solid #2b2b2b; background:#141414; color:#ffe066; cursor:pointer; font-weight:700; font-size:13px; }
+        .nb-bell{
+          position:relative; display:inline-flex; align-items:center; justify-content:center;
+          width:38px; height:38px; border-radius:10px; border:1px solid #2b2b2b;
+          background:#141414; color:#ffe066; cursor:pointer;
+        }
+        .nb-badge{
+          position:absolute; top:-6px; right:-6px; min-width:18px; height:18px; padding:0 5px;
+          border-radius:999px; background:#ff4d4f; color:#fff; font-size:11px;
+          display:inline-flex; align-items:center; justify-content:center; border:1px solid #400;
+        }
+        .nb-panel{
+          position:absolute; right:0; top:calc(100% + 8px);
+          width:min(420px, 92vw); max-height:70vh; overflow:hidden; z-index:1000;
+          background:#0f0f0f; border:1px solid #2a2a2a; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5);
+        }
+        .nb-tabs{
+          display:flex; align-items:center; gap:6px; padding:8px; border-bottom:1px solid #222;
+          background:linear-gradient(180deg, rgba(255,224,102,.06), transparent);
+        }
+        .nb-tab{
+          padding:6px 10px; border-radius:8px; border:1px solid #2b2b2b; background:#141414; color:#ffe066;
+          cursor:pointer; font-weight:700; font-size:13px;
+        }
         .nb-tab.active{ background:#1b1b1b; box-shadow:inset 0 0 0 1px #333; }
         .nb-spacer{ flex:1; }
-        .nb-ctrl{ padding:6px 10px; border-radius:8px; border:1px solid #2b2b2b; background:#141414; color:#ffe066; cursor:pointer; font-weight:700; }
+        .nb-ctrl{
+          padding:6px 10px; border-radius:8px; border:1px solid #2b2b2b; background:#141414; color:#ffe066; cursor:pointer; font-weight:700;
+        }
+        .nb-ctrl.disabled{ opacity:.6; cursor:not-allowed; }
+
         .nb-body{ max-height:60vh; overflow:auto; }
         .nb-empty{ padding:18px; color:#bbb; font-size:13px; display:flex; align-items:center; gap:8px; justify-content:center; }
         .spin{ animation:spin .8s linear infinite; } @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+        .nb-item{ display:flex; gap:12px; padding:12px; border-bottom:1px solid #1e1e1e; background:#101010; color:#ffe066; }
+        .nb-item.read{ background:#0f0f0f; color:#cbb25a; }
+        .nb-avatar{ width:40px; height:40px; border-radius:999px; object-fit:cover; border:1px solid #2a2a2a; }
+        .nb-content{ flex:1; min-width:0; }
+        .nb-line{ font-size:14px; }
+        .nb-link{ font-size:13px; text-decoration:underline; color:#ffe066; }
+        .nb-time{ font-size:12px; color:#9a9a9a; margin-top:2px; }
+        .nb-mark{ align-self:center; background:#111; color:#fff; border:1px solid #111; border-radius:10px; padding:6px 10px; font-weight:800; cursor:pointer; white-space:nowrap; }
+        .nb-footer{ padding:12px; border-top:1px solid #222; text-align:center; }
+        .nb-viewall{ background:#ffe066; color:#111; border:none; border-radius:6px; font-weight:700; padding:6px 18px; cursor:pointer; }
+
+        /* Requests (shared) */
+        .nb-reqTabs{ display:flex; gap:8px; padding:8px; border-bottom:1px solid #1f1f1f; background:#0f0f0f; position:sticky; top:0; z-index:2; }
+        .nb-reqTab{ padding:6px 10px; border-radius:8px; border:1px solid #2b2b2b; background:#141414; color:#ffe066; cursor:pointer; font-weight:700; font-size:13px; }
+        .nb-reqTab.active{ background:#1b1b1b; box-shadow:inset 0 0 0 1px #333; }
+
         .nb-list{ padding:6px 8px 10px; display:flex; flex-direction:column; gap:8px; }
         .nb-row{ display:grid; grid-template-columns:1fr auto; align-items:center; gap:10px; padding:8px; border:1px solid #262626; border-radius:10px; background:#121212; }
         .nb-rowL{ display:flex; align-items:center; gap:10px; min-width:0; }

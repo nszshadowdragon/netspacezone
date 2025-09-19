@@ -13,8 +13,9 @@ import "./index.css";
 
 import App from "./App";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { NotificationProvider } from "./context/NotificationContext"; // NEW
-import { FriendsProvider } from "./context/FriendsContext"; // NEW
+import { NotificationProvider } from "./context/NotificationContext";
+import { FriendsProvider } from "./context/FriendsContext";
+import { ThemeProvider } from "./context/ThemeContext"; // NEW
 
 // Public
 import Landing from "./pages/LandingPage.jsx";
@@ -36,7 +37,6 @@ function StartGate() {
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    // While loading, go to landing to avoid blank screen
     if (loading) {
       navigate("/landing", { replace: true });
       return;
@@ -78,40 +78,41 @@ function RequireAuth({ children }) {
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <AuthProvider>
-      <NotificationProvider>
-        <FriendsProvider>
-          <BrowserRouter>
-            <Routes>
-              {/* Root: guest -> /landing, authed -> /spacehub */}
-              <Route path="/" element={<StartGate />} />
+      <ThemeProvider> {/* NEW: wrap everything with theme */}
+        <NotificationProvider>
+          <FriendsProvider>
+            <BrowserRouter>
+              <Routes>
+                {/* Root: guest -> /landing, authed -> /spacehub */}
+                <Route path="/" element={<StartGate />} />
 
-              {/* Public */}
-              <Route path="/landing" element={<Landing />} />
-              <Route path="/signup" element={<Signup />} />
+                {/* Public */}
+                <Route path="/landing" element={<Landing />} />
+                <Route path="/signup" element={<Signup />} />
 
-              {/* Protected layout (Navbar + Outlet) */}
-              <Route element={<RequireAuth><App /></RequireAuth>}>
-                {/* Use RELATIVE paths so <App> always wraps them */}
-                <Route path="spacehub" element={<SpaceHubPage />} />
-                <Route path="profile" element={<ProfilePage />} />
-                <Route path="profile/:username" element={<ProfilePage />} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="store" element={<StorePage />} />
-                <Route path="events" element={<EventsPage />} />
-                <Route path="blog" element={<BlogPage />} />
-                <Route path="podcast" element={<PodcastPage />} />
-                <Route path="creatorshub" element={<CreatorsHubPage />} />
-                <Route path="creators" element={<CreatorsHubPage />} />
-                {/* in-app fallback */}
-                <Route path="*" element={<Navigate to="spacehub" replace />} />
-              </Route>
+                {/* Protected layout (Navbar + Outlet) */}
+                <Route element={<RequireAuth><App /></RequireAuth>}>
+                  <Route path="spacehub" element={<SpaceHubPage />} />
+                  <Route path="profile" element={<ProfilePage />} />
+                  <Route path="profile/:username" element={<ProfilePage />} />
+                  <Route path="settings" element={<SettingsPage />} />
+                  <Route path="store" element={<StorePage />} />
+                  <Route path="events" element={<EventsPage />} />
+                  <Route path="blog" element={<BlogPage />} />
+                  <Route path="podcast" element={<PodcastPage />} />
+                  <Route path="creatorshub" element={<CreatorsHubPage />} />
+                  <Route path="creators" element={<CreatorsHubPage />} />
+                  {/* in-app fallback */}
+                  <Route path="*" element={<Navigate to="spacehub" replace />} />
+                </Route>
 
-              {/* global fallback */}
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </BrowserRouter>
-        </FriendsProvider>
-      </NotificationProvider>
+                {/* global fallback */}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </BrowserRouter>
+          </FriendsProvider>
+        </NotificationProvider>
+      </ThemeProvider>
     </AuthProvider>
   </React.StrictMode>
 );

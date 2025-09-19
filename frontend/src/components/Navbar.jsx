@@ -1,9 +1,11 @@
+// frontend/src/components/Navbar.jsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import SearchBar from "./SearchBar";
 import { useAuth } from "../context/AuthContext";
 import NotificationBell from "./NotificationBell";
 import NotificationsPopup from "./NotificationsPopup";
+import ThemeSelector from "./ThemeSelector";
 
 /* --------------------- helpers --------------------- */
 function isLocalhost() {
@@ -59,7 +61,7 @@ export default function Navbar({ unreadCount = 0 }) {
   const [currentUser, setCurrentUser] = useState(user);
   const [avatarVersion, setAvatarVersion] = useState(() => localStorage.getItem("nsz:avatar:v") || "");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [showAllPopup, setShowAllPopup] = useState(false); // full-screen NotificationsPopup
+  const [showAllPopup, setShowAllPopup] = useState(false);
 
   const dropdownRef = useRef(null);
   const navRef = useRef(null);
@@ -67,7 +69,7 @@ export default function Navbar({ unreadCount = 0 }) {
   const [navH, setNavH] = useState(92);
   const [rightInset, setRightInset] = useState("0px");
 
-  const GOLD = "#facc15";
+  const GOLD = "var(--primary-color)"; // use CSS variable for theme
 
   useEffect(() => setCurrentUser(user), [user]);
 
@@ -105,7 +107,6 @@ export default function Navbar({ unreadCount = 0 }) {
     };
   }, []);
 
-  // close menu on outside click
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target) && !e.target.closest("#menuBtn")) {
@@ -116,7 +117,6 @@ export default function Navbar({ unreadCount = 0 }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // measure navbar height + compute right inset (scrollbar width + safe area + extra gap)
   useEffect(() => {
     const RIGHT_GAP_PX = 24;
     const update = () => {
@@ -160,16 +160,8 @@ export default function Navbar({ unreadCount = 0 }) {
       e?.stopPropagation?.();
       try {
         if (typeof logout === "function") await Promise.resolve(logout());
-        try {
-          await fetch(`${apiHost()}/api/auth/logout`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-          });
-        } catch {}
-        try {
-          localStorage.removeItem("token");
-        } catch {}
+        try { await fetch(`${apiHost()}/api/auth/logout`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" } }); } catch {}
+        try { localStorage.removeItem("token"); } catch {}
         try {
           if ("BroadcastChannel" in window) {
             const bc = new BroadcastChannel("nsz_auth");
@@ -190,55 +182,23 @@ export default function Navbar({ unreadCount = 0 }) {
     <>
       {/* Responsive tweaks */}
       <style>{`
-        @media (max-width: 900px){
-          .nsz-username { display: none !important; }
-        }
+        @media (max-width: 900px){ .nsz-username { display: none !important; } }
         @media (max-width: 768px){
-          .nsz-bar { 
-            flex-wrap: wrap !important; 
-            justify-content: center !important;
-            row-gap: 10px !important;
-            padding: 10px 12px !important;
-            height: auto !important;
-          }
-          .nsz-logo { 
-            order: 1; 
-            height: 64px !important;
-            transform: scale(1.5, 1.15);
-            transform-origin: center; 
-            margin: 0 auto !important; 
-            display: block !important;
-          }
-          .nsz-search { 
-            order: 2; 
-            width: min(92vw, 640px) !important; 
-            margin: 0 auto !important; 
-          }
-          .nsz-actions { 
-            order: 3; 
-            width: 100% !important; 
-            display: flex !important; 
-            justify-content: space-evenly !important; 
-            align-items: center !important;
-            gap: 18px !important;
-          }
-          /* adapt the new bell size */
+          .nsz-bar { flex-wrap: wrap !important; justify-content: center !important; row-gap: 10px !important; padding: 10px 12px !important; height: auto !important; }
+          .nsz-logo { order: 1; height: 64px !important; transform: scale(1.5, 1.15); transform-origin: center; margin: 0 auto !important; display: block !important; }
+          .nsz-search { order: 2; width: min(92vw, 640px) !important; margin: 0 auto !important; }
+          .nsz-actions { order: 3; width: 100% !important; display: flex !important; justify-content: space-evenly !important; align-items: center !important; gap: 18px !important; }
           .nb-bell { width: 34px !important; height: 34px !important; font-size: .95rem !important; }
           .nsz-avatar { width: 40px !important; height: 40px !important; border-width: 1.5px !important; }
           #menuBtn { font-size: 1.8rem !important; }
         }
         @media (max-width: 420px){
-          .nsz-logo { 
-            height: 60px !important;
-            transform: scale(1.5, 1.15);
-          }
+          .nsz-logo { height: 60px !important; transform: scale(1.5, 1.15); }
           .nb-bell { width: 30px !important; height: 30px !important; }
           .nsz-avatar { width: 36px !important; height: 36px !important; }
           #menuBtn { font-size: 1.6rem !important; }
         }
-        @media (min-width: 901px){
-          .nsz-search { min-width: 280px; max-width: 480px; }
-        }
+        @media (min-width: 901px){ .nsz-search { min-width: 280px; max-width: 480px; } }
       `}</style>
 
       {/* TOP BAR */}
@@ -249,32 +209,23 @@ export default function Navbar({ unreadCount = 0 }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-evenly",
-          background: "#000",
+          background: "var(--bg-color)",
           borderBottom: `1.5px solid ${GOLD}`,
           position: "sticky",
           top: 0,
           zIndex: 1000,
           height: 92,
           padding: "0 24px",
+          color: "var(--text-color)",
+          transition: "background 0.3s ease, color 0.3s ease",
         }}
       >
-        {/* Logo */}
         <img src="/assets/nsz-logo2.png" alt="NSZ Logo" className="nsz-logo" style={{ height: 182 }} />
+        <div className="nsz-search" style={{ width: "100%" }}><SearchBar /></div>
 
-        {/* Search */}
-        <div className="nsz-search" style={{ width: "100%" }}>
-          <SearchBar />
-        </div>
-
-        {/* Right actions */}
         <div className="nsz-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {/* Unified Notification Bell (with Requests tab) */}
-          <NotificationBell
-            className="nb-anchor"
-            onViewAll={() => setShowAllPopup(true)}
-          />
-
-          {/* Avatar + username -> Profile */}
+          <ThemeSelector />
+          <NotificationBell className="nb-anchor" onViewAll={() => setShowAllPopup(true)} />
           <Link
             to={profilePath}
             onClick={() => setMenuOpen(false)}
@@ -287,26 +238,14 @@ export default function Navbar({ unreadCount = 0 }) {
               crossOrigin="anonymous"
               draggable="false"
               className="nsz-avatar"
-              onError={(e) => {
-                if (!e.currentTarget.dataset.fallback) {
-                  e.currentTarget.dataset.fallback = "1";
-                  e.currentTarget.src = FALLBACK_AVATAR;
-                }
-              }}
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: "50%",
-                objectFit: "cover",
-                border: `2px solid ${GOLD}`,
-              }}
+              onError={(e) => { if (!e.currentTarget.dataset.fallback) { e.currentTarget.dataset.fallback = "1"; e.currentTarget.src = FALLBACK_AVATAR; } }}
+              style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover", border: `2px solid ${GOLD}` }}
             />
             <div className="nsz-username" style={{ color: GOLD, fontWeight: 700, fontSize: "1rem", marginTop: 3 }}>
               {currentUser?.username || "Guest"}
             </div>
           </Link>
 
-          {/* Burger */}
           <button
             id="menuBtn"
             onClick={() => setMenuOpen((p) => !p)}
@@ -326,7 +265,7 @@ export default function Navbar({ unreadCount = 0 }) {
             position: "fixed",
             top: navH,
             right: rightInset,
-            background: "#000",
+            background: "var(--bg-color)",
             border: `1.5px solid ${GOLD}`,
             borderRadius: "12px 0 0 12px",
             padding: "10px 8px",
@@ -334,15 +273,14 @@ export default function Navbar({ unreadCount = 0 }) {
             width: dropdownWidth,
             minWidth: 220,
             boxShadow: "0 8px 24px rgba(0,0,0,.5)",
+            color: "var(--text-color)",
+            transition: "background 0.3s ease, color 0.3s ease",
           }}
         >
           {visibleMenuPages.map((item) => (
             <div
               key={item.key}
-              onClick={() => {
-                navigate(item.to);
-                setMenuOpen(false);
-              }}
+              onClick={() => { navigate(item.to); setMenuOpen(false); }}
               style={{
                 margin: "6px 6px",
                 padding: "12px 16px",
@@ -386,7 +324,6 @@ export default function Navbar({ unreadCount = 0 }) {
         </div>
       )}
 
-      {/* Full-screen Notifications / Requests overlay */}
       {showAllPopup && <NotificationsPopup onClose={() => setShowAllPopup(false)} />}
     </>
   );

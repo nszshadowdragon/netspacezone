@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../context/ThemeContext"; // <-- import theme
 import ImageGallery from "../components/ImageGallery";
 import AvatarImg from "../components/AvatarImg";
 import useFriendship from "../hooks/useFriendship";
@@ -47,6 +48,7 @@ export default function ProfilePage() {
   const location = useLocation();
   const { username: routeUsername } = useParams();
   const { user } = useAuth();
+  const { theme } = useTheme(); // <-- get theme
 
   const [profileUser, setProfileUser] = useState(null);
   const [toast, setToast] = useState("");
@@ -76,7 +78,6 @@ export default function ProfilePage() {
     }
   }, [routeUsername, user?.username, navigate]);
 
-  // cache-first load
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -103,53 +104,59 @@ export default function ProfilePage() {
     };
   }, [routeUsername, user]);
 
-  // ---------- Real-time friendship via hook (optimistic + guarded) ----------
   const targetId = profileUser?._id || profileUser?.id || "";
-  const targetUsername = profileUser?.username || routeUsername || "";
+  const targetUsernameProfile = profileUser?.username || routeUsername || "";
 
   const {
-    status,           // 'self' | 'none' | 'pending' | 'incoming' | 'friends'
+    status,
     busy,
     request, cancel, accept, decline, unfriend,
     FRIEND_STATUS: FS,
-  } = useFriendship({ userId: targetId, username: targetUsername });
+  } = useFriendship({ userId: targetId, username: targetUsernameProfile });
 
-  // ---- Actions ----
   async function handleAddFriend() {
     const r = await request();
-    if (!r.ok) setToast("Could not send request."); else setToast("Friend request sent");
+    setToast(!r.ok ? "Could not send request." : "Friend request sent");
     setTimeout(() => setToast(""), 1800);
   }
   async function handleCancelRequest() {
     const r = await cancel();
-    if (!r.ok) setToast("Could not cancel."); else setToast("");
+    setToast(!r.ok ? "Could not cancel." : "");
     setTimeout(() => setToast(""), 1800);
   }
   async function handleAcceptFriend() {
     const r = await accept();
-    if (!r.ok) setToast("Could not accept."); else setToast("You are now friends");
+    setToast(!r.ok ? "Could not accept." : "You are now friends");
     setTimeout(() => setToast(""), 1800);
   }
   async function handleDeclineFriend() {
     const r = await decline();
-    if (!r.ok) setToast("Could not decline."); else setToast("");
+    setToast(!r.ok ? "Could not decline." : "");
     setTimeout(() => setToast(""), 1800);
   }
   async function handleConfirmUnfriend() {
     const r = await unfriend();
-    if (!r.ok) setToast("Could not unfriend."); else setToast("Removed from friends");
+    setToast(!r.ok ? "Could not unfriend." : "Removed from friends");
     setConfirmUnfriendOpen(false);
     setTimeout(() => setToast(""), 1800);
   }
 
-  // Button visibility
   const showAddBtn = !(status === FS.SELF) && status === FS.NONE;
   const showRequested = !(status === FS.SELF) && status === FS.PENDING;
   const showIncoming = !(status === FS.SELF) && status === FS.INCOMING;
   const showUnfriend = !(status === FS.SELF) && status === FS.FRIENDS;
 
   return (
-    <div className="profile-page" style={{ position: "relative" }} key={routeUsername || user?.username}>
+    <div
+      className="profile-page"
+      style={{
+        position: "relative",
+        background: "var(--bg-color)",
+        color: "var(--text-color)",
+      }}
+      key={routeUsername || user?.username}
+      data-theme={theme} // <-- apply current theme
+    >
       <div
         style={{
           position: "absolute",
@@ -162,14 +169,10 @@ export default function ProfilePage() {
       />
 
       <style>{`
-        .profile-page{ min-height:100vh; width:100vw; background:#000; color:#ffe259; }
-        .pp-container{ position:relative; z-index:1; padding:2rem; max-width:1100px; margin:0 auto; }
+        .profile-page { min-height:100vh; width:100vw; background: var(--bg-color); color: var(--text-color); }
+        .pp-container { position:relative; z-index:1; padding:2rem; max-width:1100px; margin:0 auto; }
         @media (max-width: 680px){ .pp-container{ padding:1rem; } }
-        .pp-header{
-          display:flex; gap:1rem; justify-content:space-between; align-items:flex-start;
-          padding:1.25rem; margin-bottom:2rem; border:1px solid #333; border-radius:8px;
-          background:rgba(17,17,17,.6);
-        }
+        .pp-header { display:flex; gap:1rem; justify-content:space-between; align-items:flex-start; padding:1.25rem; margin-bottom:2rem; border:1px solid var(--primary-color); border-radius:8px; background: rgba(17,17,17,.6); }
         .pp-left{ flex:1; }
         .pp-center{ flex:1; text-align:center; }
         .pp-right{ flex:1; text-align:right; }
@@ -178,22 +181,17 @@ export default function ProfilePage() {
         .pp-main{ display:flex; gap:2rem; }
         .pp-col-left{ flex:2; }
         .pp-col-right{ flex:1; }
-        @media (max-width: 900px){
-          .pp-header{ flex-direction:column; align-items:center; text-align:center; }
-          .pp-right{ text-align:center; }
-          .pp-actions{ justify-content:center; }
-          .pp-main{ flex-direction:column; }
-        }
-        .section{ margin-bottom:2rem; padding:1rem; border-radius:8px; border:1px solid #333; background:rgba(17,17,17,.5); }
+        @media (max-width: 900px){ .pp-header{ flex-direction:column; align-items:center; text-align:center; } .pp-right{ text-align:center; } .pp-actions{ justify-content:center; } .pp-main{ flex-direction:column; } }
+        .section{ margin-bottom:2rem; padding:1rem; border-radius:8px; border:1px solid var(--primary-color); background: rgba(17,17,17,.5); }
         .pp-btn{ border:none; padding:.45rem .85rem; border-radius:6px; cursor:pointer; font-weight:700; }
-        .pp-btn.gold{ background:#ffe259; color:#000; }
-        .pp-btn.action{ border:1px solid #333; background:rgba(255,226,89,.2); color:#ffe259; }
+        .pp-btn.gold{ background: var(--primary-color); color: var(--bg-color); }
+        .pp-btn.action{ border:1px solid var(--primary-color); background:rgba(255,226,89,.2); color:var(--text-color); }
         .pp-btn[disabled]{ opacity:.55; cursor:not-allowed; }
-        textarea.pp-input{ width:100%; padding:.5rem; border-radius:6px; background:transparent; border:1px solid #333; color:#ffe259; }
+        textarea.pp-input{ width:100%; padding:.5rem; border-radius:6px; background:transparent; border:1px solid var(--primary-color); color:var(--text-color); }
         .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; z-index:50; }
-        .modal{ background:#111; border:1px solid #444; border-radius:10px; padding:1rem; width:min(420px,92vw); box-shadow:0 0 18px rgba(255,226,89,.15); }
+        .modal{ background: var(--bg-color-darker, #111); border:1px solid var(--primary-color); border-radius:10px; padding:1rem; width:min(420px,92vw); box-shadow:0 0 18px rgba(255,226,89,.15); }
         .modal-actions{ display:flex; gap:.5rem; justify-content:flex-end; }
-        .pp-toast{ font-size:12px; color:#bbb; min-height:18px; margin-left:.25rem; }
+        .pp-toast{ font-size:12px; color:var(--text-color); min-height:18px; margin-left:.25rem; }
       `}</style>
 
       <div className="pp-container">
@@ -276,10 +274,6 @@ export default function ProfilePage() {
               <textarea
                 className="pp-input"
                 placeholder="What's on your mind?"
-                style={{
-                  width:"100%", padding:".5rem", borderRadius:6,
-                  background:"transparent", border:"1px solid #333", color:"#ffe259",
-                }}
               />
               <button className="pp-btn gold" style={{ marginTop: ".5rem" }}>
                 Post
@@ -291,7 +285,7 @@ export default function ProfilePage() {
               {profileUser ? (
                 <ImageGallery ownerId={profileUser._id} canEdit={isSelf} />
               ) : (
-                <div style={{ color: "#bbb" }}>Loading profile…</div>
+                <div style={{ color: "var(--text-color-light, #bbb)" }}>Loading profile…</div>
               )}
             </div>
           </div>
@@ -299,7 +293,6 @@ export default function ProfilePage() {
           <div className="pp-col-right">
             <div className="section">
               <h2>Friends</h2>
-              {/* ... any sidebar content ... */}
             </div>
           </div>
         </div>
@@ -309,7 +302,7 @@ export default function ProfilePage() {
         <div className="overlay" role="dialog" aria-modal="true" aria-label="Unfriend confirmation">
           <div className="modal">
             <h3>Unfriend @{displayUsername}?</h3>
-            <p style={{ color: "#ddd", marginTop: 0 }}>
+            <p style={{ color: "var(--text-color-light, #ddd)", marginTop: 0 }}>
               You can add them again later. This action won’t delete messages.
             </p>
             <div className="modal-actions">

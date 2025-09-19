@@ -13,15 +13,22 @@ html, body, #root {
 
 body {
   font-family: system-ui, sans-serif;
-  background: #fff;
-  color: #000;
+  background: var(--bg-color, #fff);
+  color: var(--text-color, #000);
   line-height: 1.5;
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
 /* Layout helpers */
 :root {
   --max-width: 1200px;
   --padding: 1rem;
+
+  /* Default theme variables (normal1) */
+  --bg-color: #0b0b0b;
+  --text-color: #fff;
+  --primary-color: #ffcc15;
+  --secondary-color: #1f2937;
 }
 
 .container {
@@ -41,4 +48,50 @@ body {
   :root {
     --padding: 0.5rem;
   }
+}
+
+/* Theme overrides using data-theme on <html> */
+html[data-theme="light"] {
+  --bg-color: #ffffff;
+  --text-color: #111827;
+  --primary-color: #2563eb;
+  --secondary-color: #e5e7eb;
+}
+
+html[data-theme="normal1"] {
+  --bg-color: #0b0b0b;
+  --text-color: #fff;
+  --primary-color: #ffcc15;
+  --secondary-color: #1f2937;
+}
+
+html[data-theme="dark"] {
+  --bg-color: #0f1724;
+  --text-color: #f8fafc;
+  --primary-color: #60a5fa;
+  --secondary-color: #1e293b;
+}
+
+/* Example usage of variables */
+body {
+  background: var(--bg-color);
+  color: var(--text-color);
+}
+
+a {
+  color: var(--primary-color);
+  text-decoration: none;
+}
+
+button {
+  background-color: var(--primary-color);
+  color: var(--text-color);
+  border: none;
+  cursor: pointer;
+}
+
+button:focus {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.12);
 }
