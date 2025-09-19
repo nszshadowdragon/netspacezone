@@ -7,13 +7,15 @@ import ImageGallery from "../components/ImageGallery";
 import AvatarImg from "../components/AvatarImg";
 import useFriendship from "../hooks/useFriendship";
 
-const isLocal = /localhost|127\.0\.0\.1/.test(window.location.hostname);
+// Safe SSR check for window
+const isLocal = typeof window !== "undefined" && /localhost|127\.0\.0\.1/.test(window.location.hostname);
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL || (isLocal ? "http://localhost:5000" : "");
 
 const PROFILE_CACHE = new Map();
 
 function getToken() {
+  if (typeof window === "undefined") return "";
   return (
     localStorage.getItem("token") ||
     localStorage.getItem("authToken") ||
@@ -51,7 +53,7 @@ export default function ProfilePage() {
   const { theme: viewerTheme } = useTheme();
 
   const [profileUser, setProfileUser] = useState(null);
-  const [profileThemeVars, setProfileThemeVars] = useState(null); // <- new: holds CSS vars for profile owner
+  const [profileThemeVars, setProfileThemeVars] = useState(null);
   const [toast, setToast] = useState("");
   const [confirmUnfriendOpen, setConfirmUnfriendOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -60,10 +62,7 @@ export default function ProfilePage() {
     if (!user) return false;
     if (profileUser?._id && user._id) return String(user._id) === String(profileUser._id);
     if (routeUsername) {
-      return (
-        String(routeUsername).toLowerCase() ===
-        String(user.username || "").toLowerCase()
-      );
+      return String(routeUsername).toLowerCase() === String(user.username || "").toLowerCase();
     }
     return true;
   }, [user, profileUser, routeUsername]);
@@ -79,6 +78,7 @@ export default function ProfilePage() {
     }
   }, [routeUsername, user?.username, navigate]);
 
+  // --- Vercel-safe profile + theme fetch ---
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -86,28 +86,25 @@ export default function ProfilePage() {
       if (!targetUsername) return;
       const key = String(targetUsername).toLowerCase();
 
-      if (PROFILE_CACHE.has(key)) {
-        const cached = PROFILE_CACHE.get(key);
-        setProfileUser(cached);
-        // Apply profile theme vars from cache
-        setProfileThemeVars(getThemeVars(cached?.theme || viewerTheme));
-      } else if (routeUsername && user?.username && routeUsername === user.username) {
-        PROFILE_CACHE.set(key, user);
-        setProfileUser(user);
-        setProfileThemeVars(getThemeVars(user?.theme || viewerTheme));
-      }
+      // Try cache first
+      let profile = PROFILE_CACHE.get(key) || null;
 
+      // Fetch fresh profile regardless of cache
       const fresh = await fetchProfileByUsername(targetUsername);
       if (cancelled) return;
+
       if (fresh) {
         PROFILE_CACHE.set(key, fresh);
-        setProfileUser(fresh);
-        setProfileThemeVars(getThemeVars(fresh?.theme || viewerTheme));
+        profile = fresh;
+      }
+
+      if (profile) {
+        setProfileUser(profile);
+        // Apply profile's theme, fallback to viewerTheme
+        setProfileThemeVars(getThemeVars(profile?.theme || viewerTheme));
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [routeUsername, user, viewerTheme]);
 
   const targetId = profileUser?._id || profileUser?.id || "";
@@ -161,12 +158,10 @@ export default function ProfilePage() {
         color: "var(--text-color)",
         minHeight: "100vh",
         width: "100vw",
-        // apply profile owner's CSS variables locally if available
         ...(profileThemeVars || {}),
       }}
       key={routeUsername || user?.username}
     >
-      {/* subtle background watermark */}
       <div
         style={{
           position: "absolute",
@@ -179,81 +174,29 @@ export default function ProfilePage() {
       />
 
       <style>{`
-        /* Profile page uses theme CSS variables set on :root by ThemeContext,
-           but we also allow overriding them locally via inline style (profileThemeVars) */
         .profile-page { min-height:100vh; width:100vw; background: var(--bg-color); color: var(--text-color); }
         .pp-container { position:relative; z-index:1; padding:2rem; max-width:1100px; margin:0 auto; }
         @media (max-width: 680px){ .pp-container{ padding:1rem; } }
-
-        /* Panels use panel variables so theme can customize them */
-        .pp-header {
-          display:flex;
-          gap:1rem;
-          justify-content:space-between;
-          align-items:flex-start;
-          padding:1.25rem;
-          margin-bottom:2rem;
-          border:1px solid var(--primary-color);
-          border-radius:8px;
-          background: var(--panel-bg, rgba(17,17,17,.6));
-        }
-
+        .pp-header { display:flex; gap:1rem; justify-content:space-between; align-items:flex-start; padding:1.25rem; margin-bottom:2rem; border:1px solid var(--primary-color); border-radius:8px; background: var(--panel-bg, rgba(17,17,17,.6)); }
         .pp-left{ flex:1; }
         .pp-center{ flex:1; text-align:center; }
         .pp-right{ flex:1; text-align:right; }
-
         .pp-actions{ margin-top:.8rem; display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
         .pp-username{ margin:0; font-size:clamp(20px,3.2vw,28px); }
         .pp-main{ display:flex; gap:2rem; }
         .pp-col-left{ flex:2; }
         .pp-col-right{ flex:1; }
-
-        @media (max-width: 900px){
-          .pp-header{ flex-direction:column; align-items:center; text-align:center; }
-          .pp-right{ text-align:center; }
-          .pp-actions{ justify-content:center; }
-          .pp-main{ flex-direction:column; }
-        }
-
-        .section{
-          margin-bottom:2rem;
-          padding:1rem;
-          border-radius:8px;
-          border:1px solid var(--primary-color);
-          background: var(--panel-bg-soft, rgba(17,17,17,.5));
-        }
-
+        @media (max-width: 900px){ .pp-header{ flex-direction:column; align-items:center; text-align:center; } .pp-right{ text-align:center; } .pp-actions{ justify-content:center; } .pp-main{ flex-direction:column; } }
+        .section{ margin-bottom:2rem; padding:1rem; border-radius:8px; border:1px solid var(--primary-color); background: var(--panel-bg-soft, rgba(17,17,17,.5)); }
         .pp-btn{ border:none; padding:.45rem .85rem; border-radius:6px; cursor:pointer; font-weight:700; }
         .pp-btn.gold{ background: var(--primary-color); color: var(--bg-color); }
-        .pp-btn.action{
-          border:1px solid var(--primary-color);
-          background: var(--action-bg, rgba(255,226,89,.12));
-          color: var(--text-color);
-        }
+        .pp-btn.action{ border:1px solid var(--primary-color); background: var(--action-bg, rgba(255,226,89,.12)); color: var(--text-color); }
         .pp-btn[disabled]{ opacity:.55; cursor:not-allowed; }
-
-        textarea.pp-input{
-          width:100%;
-          padding:.5rem;
-          border-radius:6px;
-          background:transparent;
-          border:1px solid var(--primary-color);
-          color:var(--text-color);
-        }
-
+        textarea.pp-input{ width:100%; padding:.5rem; border-radius:6px; background:transparent; border:1px solid var(--primary-color); color:var(--text-color); }
         .overlay{ position:fixed; inset:0; background:var(--overlay-bg, rgba(0,0,0,.6)); display:flex; align-items:center; justify-content:center; z-index:50; }
-        .modal{
-          background: var(--bg-color-darker, #111);
-          border:1px solid var(--primary-color);
-          border-radius:10px;
-          padding:1rem;
-          width:min(420px,92vw);
-          box-shadow:0 0 18px rgba(0,0,0,.25);
-        }
+        .modal{ background: var(--bg-color-darker, #111); border:1px solid var(--primary-color); border-radius:10px; padding:1rem; width:min(420px,92vw); box-shadow:0 0 18px rgba(0,0,0,.25); }
         .modal-actions{ display:flex; gap:.5rem; justify-content:flex-end; }
         .pp-toast{ font-size:12px; color:var(--text-color-light, #bbb); min-height:18px; margin-left:.25rem; }
-
-        /* small helpers */
         .muted { color: var(--text-color-light, #bbb); }
       `}</style>
 
