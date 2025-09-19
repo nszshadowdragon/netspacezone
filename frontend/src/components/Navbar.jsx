@@ -1,4 +1,3 @@
-// frontend/src/components/Navbar.jsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import SearchBar from "./SearchBar";
@@ -180,7 +179,6 @@ export default function Navbar({ unreadCount = 0 }) {
 
   return (
     <>
-      {/* Responsive tweaks */}
       <style>{`
         @media (max-width: 900px){ .nsz-username { display: none !important; } }
         @media (max-width: 768px){
@@ -201,7 +199,6 @@ export default function Navbar({ unreadCount = 0 }) {
         @media (min-width: 901px){ .nsz-search { min-width: 280px; max-width: 480px; } }
       `}</style>
 
-      {/* TOP BAR */}
       <div
         ref={navRef}
         className="nsz-bar"
@@ -257,7 +254,6 @@ export default function Navbar({ unreadCount = 0 }) {
         </div>
       </div>
 
-      {/* RIGHT-EDGE DROPDOWN */}
       {menuOpen && (
         <div
           ref={dropdownRef}
